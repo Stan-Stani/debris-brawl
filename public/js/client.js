@@ -744,9 +744,12 @@ export class ClientGame {
     const v = throwVelocity(me.aim, power, sp.n, b.vx, b.vy);
     let x = b.x, y = b.y - P.h - sp.down - 1, vx = v.vx, vy = v.vy;
     ctx.fillStyle = me.charging ? (this.dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)') : (this.dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)');
+    let clear = this.grid.atPx(x, y) === 0; // like the server: it passes through what it starts inside
     for (let i = 0; i < 40; i++) {
       for (let k = 0; k < 3; k++) { vy += DEBRIS.gravity * 0.01; x += vx * 0.01; y += vy * 0.01; }
-      if (this.grid.atPx(x, y) !== 0 || y > this.H) break;
+      const solid = this.grid.atPx(x, y) !== 0;
+      if (y > this.H || (clear && solid)) break;
+      if (!solid) clear = true;
       if (i % 2 === 0) ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
     }
     if (me.charging) { // charge meter over the rock

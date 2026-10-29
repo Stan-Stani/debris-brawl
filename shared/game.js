@@ -224,7 +224,15 @@ export class Game {
     // big slabs tumble lazily; a pebble spins fast
     c.av = (Math.cos(a) >= 0 ? 1 : -1) * (5 + 9 * power) * Math.min(1, (8 * CELL) / c.rad); c.age = 0; c.rest = 0;
     p.grabCd = this.time + 0.25; p.prot = 0;
+    this.unstick(c);
     this.ev.push(['throw', p.id, c.id]);
+  }
+
+  // Carried overhead it can overlap a line of text you're standing under (text is one-way for you).
+  // Let it pass through whatever it starts inside until it's clear, instead of bouncing off at once.
+  unstick(c) {
+    c.ghost = !!this.pieceContact(c, c.x, c.y, c.rot);
+    c.ghostT = 0.5;
   }
 
   drop(p) {
@@ -232,6 +240,7 @@ export class Game {
     p.hold = 0;
     if (!c) return;
     c.holder = 0; c.immune = 0.5; c.age = 0; c.rest = 0; c.thrown = false;
+    this.unstick(c);
     this.ev.push(['throw', p.id, c.id]);
   }
 
@@ -552,7 +561,7 @@ export class Game {
           c.vx *= 0.5; c.vy *= 0.5;
         }
       }
-      const at = this.pieceContact(c, nx, ny, nr);
+      const at = c.ghost ? null : this.pieceContact(c, nx, ny, nr);
       if (at) {
         if (c.thrown && speed > DEBRIS.smash) {
           if (c.n <= DEBRIS.maxCells) { this.impact(c, nx, ny, speed, true); return; }
@@ -565,16 +574,18 @@ export class Game {
         break;
       }
       c.x = nx; c.y = ny; c.rot = nr;
+      if (c.ghost && !this.pieceContact(c, c.x, c.y, c.rot)) c.ghost = false; // clear of it: solid again
     }
+    if (c.ghost && (c.ghostT -= dt) <= 0) c.ghost = false;
     if (c.y > this.H + 100) { this.ents.delete(c.id); this.ev.push(['gone', c.id]); return; }
     // sunk into the page (it changed under the piece): lift it clear
-    if (this.pieceContact(c, c.x, c.y, c.rot)) for (let up = 1; up <= 8; up++) if (!this.pieceContact(c, c.x, c.y - up, c.rot)) { c.y -= up; break; }
+    if (!c.ghost && this.pieceContact(c, c.x, c.y, c.rot)) for (let up = 1; up <= 8; up++) if (!this.pieceContact(c, c.x, c.y - up, c.rot)) { c.y -= up; break; }
     c.av = Math.max(-30, Math.min(30, c.av));
     // at rest = touching the page and not really going anywhere, whatever its velocity says
     const moved = Math.hypot(c.x - c.px, c.y - c.py) + Math.abs(c.rot - c.pr) * c.rad;
     c.px = c.x; c.py = c.y; c.pr = c.rot;
     const still = moved < 0.6 || (Math.hypot(c.vx, c.vy) < 60 && Math.abs(c.av) < 2.5);
-    c.rest = still && this.pieceContact(c, c.x, c.y + 2, c.rot) ? c.rest + dt : 0;
+    c.rest = still && !c.ghost && this.pieceContact(c, c.x, c.y + 2, c.rot) ? c.rest + dt : 0;
     // rocks are sand again as soon as they stop; letters and shards stay whole, asleep, until picked up
     // (or until there are too many and the oldest settles into the page)
     if (!c.page && (c.rest > 0.35 || c.age > 12)) this.settle(c);

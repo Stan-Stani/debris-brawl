@@ -152,3 +152,18 @@ test('big shards of a box can be lifted and thrown; ones over the limit are too 
   assert.equal(a.hold, 0);
   assert.ok(game.flush().ev.some((e) => e[0] === 'nograb' && e[1] === a.id && e[2] === 1), 'too heavy says so');
 });
+
+test('a piece carried up into the text line overhead still flies where it was aimed', () => {
+  const { game, a } = arena();
+  Object.assign(a.body, newBody(60, 200)); // under the first line of letters (y 160..166): the held piece overlaps it
+  game.detachGlyph(30, 0, 0, 0, false); // a letter from the second line, out of the way
+  const c = [...game.ents.values()].at(-1);
+  c.x = 60; c.y = 190; c.vx = 0; c.vy = 0;
+  game.handle(a.id, { t: 'e' });
+  assert.equal(a.hold, c.id);
+  assert.ok(game.pieceContact(c, c.x, c.y, 0), 'it does start inside the text line');
+  const x0 = c.x;
+  game.handle(a.id, { t: 'th', a: -0.8, p: 0.5 });
+  steps(game, 0.25);
+  assert.ok(c.x - x0 > 100, `it flew on instead of bouncing off the line (moved ${(c.x - x0).toFixed(0)} px)`);
+});

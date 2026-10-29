@@ -7,19 +7,24 @@
 // - every request the page makes is answered by proxyFetch (public addresses only, the checked address is
 //   the one we connect to, size and time caps); Chrome itself is pointed at a dead proxy, so anything
 //   that slipped past the interception goes nowhere
-// - no WebSockets, no service workers, no WebRTC over UDP, no pop-ups, no downloads; Chrome's own sandbox on
-// - images, fonts and video are skipped (the player's browser fetches pictures itself, through /api/asset)
+// - WebSockets are relayed by us to checked public addresses only; no service workers, no WebRTC over UDP,
+//   no pop-ups, no downloads; Chrome's own sandbox on
+// - pictures get a 1-pixel stand-in (the page keeps their real addresses; the player's browser fetches the
+//   real ones through /api/asset), fonts and video are skipped
 // - one page at a time per slot, a hard deadline, and a byte budget per page
 import fs from 'node:fs';
 import { chromium } from 'playwright-core';
-import { proxyFetch, parseTarget, cleanHtml, UserError } from './fetchPage.js';
+import { WebSocket } from 'ws';
+import { proxyFetch, checkedAddress, parseTarget, cleanHtml, UserError } from './fetchPage.js';
 
 const CHROME = process.env.CHROME || [
   '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome',
   '/usr/bin/google-chrome', '/usr/bin/google-chrome-stable', '/usr/bin/chromium', '/usr/bin/chromium-browser',
 ].find((p) => fs.existsSync(p));
 const SLOTS = 2, DEADLINE = 20_000, PAGE_BYTES = 40_000_000;
-const SKIP_TYPES = new Set(['image', 'media', 'font', 'websocket', 'eventsource', 'manifest', 'other']);
+const SKIP_TYPES = new Set(['media', 'font', 'websocket', 'eventsource', 'manifest', 'other']);
+// a transparent 1×1 PNG: an image that "loads", so pages don't swap in their broken-picture fallback
+const PIXEL = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNkYAAAAAYAAjCB0C8AAAAASUVORK5CYII=', 'base64');
 
 let launching = null, active = 0;
 const waiting = [];
@@ -100,6 +105,7 @@ export async function renderPage(raw) {
 async function renderOnce(target) {
   await slot();
   let ctx = null;
+  const sockets = new Set();
   try {
     const b = await browser();
     ctx = await b.newContext({
@@ -108,9 +114,10 @@ async function renderOnce(target) {
     });
     const until = Date.now() + DEADLINE;
     let bytes = 0;
-    await ctx.routeWebSocket(/.*/, (ws) => ws.close());
+    await ctx.routeWebSocket(/.*/, (ws) => relaySocket(ws, sockets, until, (n) => { bytes += n; return bytes < PAGE_BYTES; }));
     await ctx.route('**/*', async (route) => {
       const req = route.request();
+      if (req.resourceType() === 'image') return route.fulfill({ status: 200, contentType: 'image/png', body: PIXEL }).catch(() => {});
       if (!/^https?:/i.test(req.url()) || SKIP_TYPES.has(req.resourceType()) || bytes > PAGE_BYTES || Date.now() > until) return route.abort().catch(() => {});
       try {
         const r = await fetchFollowing(req.url(), { method: req.method(), headers: await req.allHeaders(), body: req.postDataBuffer(), timeoutMs: Math.min(10_000, until - Date.now()) });
@@ -147,8 +154,34 @@ async function renderOnce(target) {
     const finalUrl = page.url();
     return { html: cleanHtml(html, finalUrl), finalUrl, rendered: true };
   } finally {
+    for (const s of sockets) s.terminate();
     await ctx?.close().catch(() => {});
     release();
+  }
+}
+
+// A page's live connection (auction status, chat…), passed through to a checked public address. Without it
+// many pages show "disconnected" badges. It lives no longer than the render.
+async function relaySocket(ws, sockets, until, budget) {
+  const shut = () => ws.close().catch(() => {});
+  try {
+    if (Date.now() > until || !/^wss?:/i.test(ws.url())) return shut();
+    const { addr } = await checkedAddress(ws.url().replace(/^ws/i, 'http'));
+    const up = new WebSocket(ws.url(), {
+      handshakeTimeout: 5000, maxPayload: 1 << 20,
+      headers: { origin: new URL(ws.url().replace(/^ws/i, 'http')).origin },
+      lookup: (_h, opts, cb) => (opts && opts.all ? cb(null, [{ address: addr.address, family: addr.family }]) : cb(null, addr.address, addr.family)),
+    });
+    sockets.add(up);
+    const queued = [];
+    ws.onMessage((m) => { if (up.readyState === 1) up.send(m); else queued.push(m); });
+    ws.onClose(() => up.terminate());
+    up.on('open', () => { for (const m of queued.splice(0)) up.send(m); });
+    up.on('message', (d, binary) => { if (!budget(d.length)) { up.terminate(); return; } try { ws.send(binary ? d : d.toString()); } catch { up.terminate(); } });
+    up.on('close', shut);
+    up.on('error', shut);
+  } catch {
+    shut();
   }
 }
 

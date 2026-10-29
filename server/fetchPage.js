@@ -130,6 +130,12 @@ const DROP_BACK = new Set(['content-encoding', 'content-length', 'transfer-encod
 // One request on behalf of the headless browser (server/render.js), under the same rules as everything
 // else: public addresses only, the checked address is the one we connect to, capped size and time.
 // Redirects go back to the browser, which asks again (and so gets checked again).
+// For other kinds of connection (the headless browser's WebSockets): a checked, public address to pin to.
+export async function checkedAddress(raw) {
+  const url = parseTarget(raw);
+  return { url, addr: await resolvePublic(url.hostname) };
+}
+
 export async function proxyFetch(raw, { method = 'GET', headers = {}, body = null, maxBytes = 8_000_000, timeoutMs = 10000 } = {}) {
   if (!['GET', 'HEAD', 'POST', 'OPTIONS'].includes(method)) throw new UserError('Method not allowed.');
   const url = parseTarget(raw);

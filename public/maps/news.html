@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>The Daily Byte</title>
+<style>
+  body { margin: 0; background: #fbf8f1; color: #1b1b1b; font-family: Georgia, "Times New Roman", serif; }
+  .wrap { width: 1180px; margin: 0 auto; }
+  .top { display: flex; justify-content: space-between; font: 13px Helvetica, Arial, sans-serif; padding: 10px 0; border-bottom: 1px solid #bbb; }
+  .mast { text-align: center; padding: 18px 0 10px; border-bottom: 4px double #1b1b1b; }
+  .mast h1 { margin: 0; font-size: 84px; letter-spacing: -2px; font-weight: 900; }
+  .mast p { margin: 4px 0 0; font-style: italic; color: #555; }
+  nav { background: #c4122f; display: flex; gap: 0; margin-top: 14px; }
+  nav a { color: #fff; font: 700 15px Helvetica, Arial, sans-serif; padding: 12px 22px; text-decoration: none; border-right: 1px solid #e55b70; }
+  .grid { display: grid; grid-template-columns: 2fr 1fr; gap: 40px; margin-top: 34px; }
+  .lead h2 { font-size: 52px; line-height: 1.05; margin: 0 0 14px; }
+  .lead img { width: 100%; height: 300px; display: block; margin: 12px 0; object-fit: cover; }
+  .kicker { font: 700 13px Helvetica, Arial, sans-serif; color: #c4122f; text-transform: uppercase; letter-spacing: 1px; }
+  .lead p { font-size: 19px; line-height: 1.55; }
+  aside { border: 3px solid #1b1b1b; padding: 18px 22px; align-self: start; background: #fff; }
+  aside h3 { margin: 0 0 12px; font: 900 22px Helvetica, Arial, sans-serif; border-bottom: 3px solid #c4122f; padding-bottom: 6px; }
+  aside ol { padding-left: 24px; margin: 0; }
+  aside li { margin: 0 0 18px; font-size: 17px; line-height: 1.35; }
+  .weather { background: #1f3b73; color: #fff; padding: 18px 22px; margin-top: 30px; font: 16px Helvetica, Arial, sans-serif; }
+  .weather b { font-size: 46px; display: block; }
+  .row3 { display: grid; grid-template-columns: repeat(3, 1fr); gap: 36px; margin-top: 46px; border-top: 2px solid #1b1b1b; padding-top: 26px; }
+  .row3 h3 { font-size: 27px; line-height: 1.15; margin: 6px 0 10px; }
+  .row3 p { font-size: 16px; line-height: 1.6; margin: 0 0 14px; }
+  .ad { margin: 50px auto; width: 728px; height: 90px; background: #ffe24a; border: 2px dashed #b38f00; display: flex; align-items: center; justify-content: center; font: 900 28px Helvetica, Arial, sans-serif; color: #6a5200; }
+  .opinion { background: #efe7d6; padding: 30px 36px; margin-top: 20px; }
+  .opinion h2 { margin: 0 0 18px; font: 900 30px Helvetica, Arial, sans-serif; }
+  .ops { display: grid; grid-template-columns: repeat(4, 1fr); gap: 24px; }
+  .ops div { border-left: 4px solid #c4122f; padding-left: 14px; font-size: 17px; line-height: 1.4; }
+  .ticker { margin-top: 44px; display: flex; gap: 14px; flex-wrap: wrap; }
+  .ticker span { font: 700 14px Helvetica, Arial, sans-serif; background: #1b1b1b; color: #fff; padding: 8px 12px; }
+  footer { margin-top: 60px; background: #1b1b1b; color: #ddd; padding: 40px 0 60px; font: 14px Helvetica, Arial, sans-serif; }
+  footer .cols { display: flex; gap: 80px; }
+  footer h4 { color: #fff; margin: 0 0 10px; }
+  footer p { margin: 6px 0; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <div class="top"><span>Thursday, October 29</span><span>Today's paper · Subscribe · Log in</span></div>
+  <div class="mast"><h1>The Daily Byte</h1><p>All the news that fits in a packet</p></div>
+  <nav><a>World</a><a>Tech</a><a>Science</a><a>Sports</a><a>Arts</a><a>Food</a><a>Opinion</a><a>Puzzles</a></nav>
+
+  <div class="grid">
+    <div class="lead">
+      <div class="kicker">Breaking</div>
+      <h2>Stick figures reported tearing through local websites; webmasters baffled</h2>
+      <img src="img/skyline.svg" alt="">
+      <p>Witnesses across the internet described small, determined figures leaping between headlines and firing on paragraphs without warning. "One minute it was a perfectly normal article," said a reader. "The next, the letters were raining down like gravel."</p>
+      <p>Experts say the debris left behind is not just a mess but ammunition. Several figures were seen scooping up broken headlines and hurling them at each other with alarming accuracy.</p>
+    </div>
+    <div>
+      <aside>
+        <h3>Most read</h3>
+        <ol>
+          <li>Why your homepage keeps exploding, explained</li>
+          <li>The ten sturdiest fonts to hide behind</li>
+          <li>Is it safe to stand on a paragraph? We asked a physicist</li>
+          <li>Rubble prices hit record low as supply soars</li>
+          <li>Opinion: Railguns have no place in a footer</li>
+        </ol>
+      </aside>
+      <div class="weather">Weather today<b>18° Cloudy</b>Chance of falling debris: 90%</div>
+    </div>
+  </div>
+
+  <div class="row3">
+    <div><div class="kicker">Science</div><h3>Researchers confirm thrown headlines hurt more than thrown footnotes</h3><p>A study of four thousand brawls found that larger chunks of text strike harder but fly slower, giving the target a sporting chance to duck.</p><p>The lead author recommends winding up for a full second before releasing a heavy one.</p></div>
+    <div><div class="kicker">Tech</div><h3>Browser makers promise to "look into" the jetpack issue</h3><p>Users report that holding the jump key after a double jump lets them hover above the page indefinitely, or at least until the fuel runs out.</p><p>A spokesperson declined to say whether the feature would be removed.</p></div>
+    <div><div class="kicker">Sports</div><h3>Grenade league season opens with record crowds and record craters</h3><p>The opening match lasted five minutes and removed most of a sports section. Fans called it the best game in years.</p><p>Tickets for the rematch sold out in seconds.</p></div>
+  </div>
+
+  <div class="ad">YOUR AD COULD BE RUBBLE HERE</div>
+
+  <div class="opinion">
+    <h2>Opinion</h2>
+    <div class="ops">
+      <div>Let them have the comment section. It was never load-bearing anyway.</div>
+      <div>I miss the days when a web page just sat there and let you read it.</div>
+      <div>In defense of the humble pistol: accurate, reliable, and polite.</div>
+      <div>The case for building your next site entirely out of borders.</div>
+    </div>
+  </div>
+
+  <div class="row3">
+    <div><div class="kicker">Food</div><h3>Five snacks that survive an explosion</h3><p>Crackers did surprisingly well. Soup did not.</p></div>
+    <div><div class="kicker">Arts</div><h3>Gallery opens exhibit made entirely of craters</h3><p>Visitors are invited to add their own.</p></div>
+    <div><div class="kicker">World</div><h3>Summit on page safety ends early after unexpected rocket</h3><p>Delegates promise to reconvene on a sturdier website.</p></div>
+  </div>
+
+  <div class="ticker"><span>MARKETS ▲ 2.4%</span><span>RUBBLE ▼ 12%</span><span>PIXELS ▲ 0.8%</span><span>FONTS — 0.0%</span><span>BORDERS ▲ 5.1%</span></div>
+</div>
+<footer>
+  <div class="wrap cols">
+    <div><h4>The Daily Byte</h4><p>Est. 1999 · Printed on recycled bits</p></div>
+    <div><h4>Sections</h4><p>World</p><p>Tech</p><p>Science</p></div>
+    <div><h4>Help</h4><p>Contact</p><p>Corrections</p><p>Wreckage claims</p></div>
+  </div>
+</footer>
+</body>
+</html>

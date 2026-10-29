@@ -1,0 +1,84 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>MegaMart - Everything, delivered</title>
+<style>
+  body { margin: 0; background: #eaeded; color: #0f1111; font-family: "Helvetica Neue", Arial, sans-serif; }
+  .bar { background: #131921; color: #fff; display: flex; align-items: center; gap: 24px; padding: 12px 28px; }
+  .bar .logo { font: 900 28px Arial, sans-serif; color: #fff; }
+  .bar .logo span { color: #ff9900; }
+  .bar .search { flex: 1; height: 40px; background: #fff; border-radius: 4px; display: flex; overflow: hidden; }
+  .bar .search i { margin-left: auto; width: 46px; background: #febd69; }
+  .bar .cart { font-weight: 700; }
+  .cats { background: #232f3e; color: #fff; display: flex; gap: 26px; padding: 10px 28px; font-size: 14px; }
+  .hero { background: #ff9900; height: 300px; display: flex; align-items: center; padding: 0 60px; }
+  .hero h1 { font-size: 60px; margin: 0; color: #131921; line-height: 1; }
+  .hero p { font-size: 22px; margin: 10px 0 0; }
+  .shelf { width: 1200px; margin: 30px auto 0; }
+  .shelf h2 { font-size: 26px; margin: 0 0 14px; }
+  .products { display: grid; grid-template-columns: repeat(4, 1fr); gap: 22px; }
+  .card { background: #fff; padding: 18px; border: 1px solid #d5d9d9; border-radius: 8px; }
+  .card img { width: 100%; height: 170px; object-fit: cover; display: block; border-radius: 4px; }
+  .card h3 { font-size: 17px; margin: 12px 0 6px; font-weight: 500; }
+  .stars { color: #de7921; font-size: 18px; letter-spacing: 2px; }
+  .price { font-size: 30px; font-weight: 500; margin: 6px 0 12px; }
+  .price sup { font-size: 14px; }
+  .buy { display: block; text-align: center; background: #ffd814; border-radius: 20px; padding: 10px; font-weight: 700; border: 1px solid #fcd200; }
+  .deal { background: #cc0c39; color: #fff; display: inline-block; padding: 3px 8px; font-size: 13px; font-weight: 700; margin-top: 8px; }
+  .banner { width: 1200px; margin: 34px auto 0; display: grid; grid-template-columns: 1fr 1fr; gap: 22px; }
+  .banner div { height: 150px; border-radius: 8px; display: flex; align-items: center; justify-content: center; font: 900 30px Arial, sans-serif; }
+  .b1 { background: #37475a; color: #fff; }
+  .b2 { background: #00a8e1; color: #fff; }
+  .reviews { width: 1200px; margin: 34px auto 0; background: #fff; padding: 24px 30px; border-radius: 8px; }
+  .reviews h2 { margin: 0 0 16px; }
+  .review { border-bottom: 1px solid #e3e6e6; padding: 14px 0; }
+  .review b { display: block; margin-bottom: 4px; }
+  footer { background: #232f3e; color: #ddd; margin-top: 50px; padding: 40px 0 70px; font-size: 14px; }
+  footer .cols { width: 1100px; margin: 0 auto; display: flex; justify-content: space-between; }
+  footer h4 { color: #fff; }
+  .back { background: #37475a; color: #fff; text-align: center; padding: 16px; font-size: 14px; margin-top: 50px; }
+</style>
+</head>
+<body>
+<div class="bar"><span class="logo">mega<span>mart</span></span><span class="search"><i></i></span><span>Hello, sign in</span><span class="cart">Cart (3)</span></div>
+<div class="cats"><span>All</span><span>Today's deals</span><span>Gift cards</span><span>Home</span><span>Electronics</span><span>Garden</span><span>Rubble</span><span>Customer service</span></div>
+<div class="hero"><div><h1>The Big Demolition Sale</h1><p>Everything must go. Mostly in pieces.</p></div></div>
+
+<div class="shelf">
+  <h2>Deals picked for you</h2>
+  <div class="products">
+    <div class="card"><img src="img/mug.svg" alt=""><h3>Extra-sturdy ceramic mug, holds 400 ml of coffee or 1 grenade</h3><div class="stars">★★★★☆</div><div class="price"><sup>$</sup>12<sup>99</sup></div><span class="buy">Add to cart</span><span class="deal">-30%</span></div>
+    <div class="card"><img src="img/phones.svg" alt=""><h3>Noise-cancelling headphones, now cancels explosions</h3><div class="stars">★★★★★</div><div class="price"><sup>$</sup>89<sup>00</sup></div><span class="buy">Add to cart</span><span class="deal">Deal of the day</span></div>
+    <div class="card"><img src="img/lamp.svg" alt=""><h3>Desk lamp with adjustable arm and surprising throwing weight</h3><div class="stars">★★★☆☆</div><div class="price"><sup>$</sup>34<sup>50</sup></div><span class="buy">Add to cart</span></div>
+    <div class="card"><img src="img/plant.svg" alt=""><h3>Indestructible house plant (warranty void if indestructed)</h3><div class="stars">★★★★☆</div><div class="price"><sup>$</sup>19<sup>99</sup></div><span class="buy">Add to cart</span></div>
+  </div>
+</div>
+
+<div class="banner"><div class="b1">Free shipping on rubble</div><div class="b2">Prime-time explosions</div></div>
+
+<div class="shelf">
+  <h2>Customers who wrecked this page also wrecked</h2>
+  <div class="products">
+    <div class="card"><img src="img/plant.svg" alt=""><h3>Spare cactus, pre-scuffed</h3><div class="stars">★★☆☆☆</div><div class="price"><sup>$</sup>7<sup>49</sup></div><span class="buy">Add to cart</span></div>
+    <div class="card"><img src="img/mug.svg" alt=""><h3>Mug, slightly chipped</h3><div class="stars">★★★★☆</div><div class="price"><sup>$</sup>4<sup>99</sup></div><span class="buy">Add to cart</span></div>
+    <div class="card"><img src="img/phones.svg" alt=""><h3>Headphones, left side only</h3><div class="stars">★☆☆☆☆</div><div class="price"><sup>$</sup>9<sup>00</sup></div><span class="buy">Add to cart</span></div>
+    <div class="card"><img src="img/lamp.svg" alt=""><h3>Lamp, mostly lamp-shaped</h3><div class="stars">★★★☆☆</div><div class="price"><sup>$</sup>14<sup>00</sup></div><span class="buy">Add to cart</span></div>
+  </div>
+</div>
+
+<div class="reviews">
+  <h2>Top reviews</h2>
+  <div class="review"><b>★★★★★ Survived three rockets</b>Bought the mug for my desk. Someone blew up the product page and the mug review section held up remarkably well.</div>
+  <div class="review"><b>★★☆☆☆ Not throwable enough</b>The plant was too light to do real damage. Would recommend scooping a bigger chunk of the footer instead.</div>
+  <div class="review"><b>★★★★☆ Great lamp</b>Lights up a room. Also lights up when hit by a railgun, which I did not expect.</div>
+</div>
+
+<div class="back">Back to top</div>
+<footer><div class="cols">
+  <div><h4>Get to know us</h4><p>Careers</p><p>Blog</p><p>About MegaMart</p></div>
+  <div><h4>Make money with us</h4><p>Sell products</p><p>Become an affiliate</p></div>
+  <div><h4>Let us help you</h4><p>Your account</p><p>Returns</p><p>Help</p></div>
+</div></footer>
+</body>
+</html>

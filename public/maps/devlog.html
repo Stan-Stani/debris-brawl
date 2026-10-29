@@ -1,0 +1,76 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Night Owl Devlog</title>
+<style>
+  body { margin: 0; background: #0f1020; color: #d8d9f0; font-family: "Inter", system-ui, sans-serif; }
+  header { padding: 34px 0 26px; text-align: center; border-bottom: 2px solid #2c2e5a; }
+  header h1 { margin: 0; font: 900 54px system-ui, sans-serif; color: #fff; letter-spacing: -1px; }
+  header h1 span { color: #a78bfa; }
+  header p { color: #8f91c4; margin: 8px 0 0; }
+  nav { display: flex; justify-content: center; gap: 12px; margin-top: 18px; }
+  nav a { border: 2px solid #a78bfa; color: #a78bfa; padding: 7px 16px; border-radius: 999px; font-weight: 700; font-size: 14px; }
+  .wrap { width: 1120px; margin: 0 auto; display: grid; grid-template-columns: 1fr 300px; gap: 50px; margin-top: 40px; }
+  article { margin-bottom: 56px; }
+  .date { color: #7a7cb0; font: 600 13px ui-monospace, Menlo, monospace; }
+  article h2 { color: #fff; font-size: 34px; margin: 6px 0 14px; line-height: 1.15; }
+  article p { font-size: 17px; line-height: 1.7; margin: 0 0 14px; }
+  pre { background: #1b1d3a; border-left: 4px solid #a78bfa; padding: 16px 20px; font: 14px/1.6 ui-monospace, Menlo, monospace; color: #c3f0ff; overflow: hidden; margin: 18px 0; }
+  .k { color: #ff79c6; } .s { color: #f1fa8c; } .c { color: #6c6f9e; }
+  .tags span { display: inline-block; background: #2c2e5a; color: #c4b5fd; padding: 4px 10px; border-radius: 4px; font-size: 13px; margin-right: 6px; }
+  aside .box { border: 2px solid #2c2e5a; padding: 18px; margin-bottom: 26px; border-radius: 8px; }
+  aside h3 { margin: 0 0 10px; color: #fff; }
+  aside p { margin: 6px 0; font-size: 15px; color: #a7a9d6; }
+  .avatar { width: 96px; height: 96px; border-radius: 50%; background: #a78bfa; margin-bottom: 12px; }
+  .glow { background: #a78bfa; color: #0f1020; font-weight: 800; text-align: center; padding: 14px; border-radius: 8px; }
+  hr { border: 0; border-top: 2px dashed #2c2e5a; margin: 40px 0; }
+  footer { text-align: center; color: #6c6f9e; padding: 40px 0 80px; border-top: 2px solid #2c2e5a; margin-top: 30px; }
+</style>
+</head>
+<body>
+<header>
+  <h1>night<span>owl</span>.dev</h1>
+  <p>notes from a game dev who should be asleep</p>
+  <nav><a>posts</a><a>projects</a><a>about</a><a>rss</a></nav>
+</header>
+<div class="wrap">
+  <main>
+    <article>
+      <div class="date">2026-10-27 · 6 min read</div>
+      <h2>Turning any web page into a level</h2>
+      <p>The trick is that the browser already did the hard part. Lay the page out, ask every element where it ended up, paint those boxes and every single letter onto a canvas, then chop the canvas into little cells. Now the page is terrain.</p>
+      <pre><span class="k">for</span> (<span class="k">const</span> el <span class="k">of</span> doc.body.querySelectorAll(<span class="s">'*'</span>)) {
+  <span class="k">const</span> r = el.getBoundingClientRect();
+  paint(r, getComputedStyle(el).backgroundColor);
+}  <span class="c">// congratulations, your blog is now a platformer</span></pre>
+      <p>Text becomes one-way ledges you can jump up through. Boxes and buttons are solid. Huge backgrounds turn into scenery so you're not trapped inside a hero banner.</p>
+      <div class="tags"><span>#gamedev</span><span>#canvas</span><span>#chaos</span></div>
+    </article>
+    <hr>
+    <article>
+      <div class="date">2026-10-21 · 4 min read</div>
+      <h2>Debris you can pick up and throw</h2>
+      <p>Every explosion throws off particles that land and settle into rubble. Stand near a pile, press E, and the nearest hundred-ish cells squash into a rock over your head. Hold to wind up, let go to throw.</p>
+      <pre>damage = (<span class="s">8</span> + cells * <span class="s">0.42</span>) * clamp(speed / <span class="s">700</span>, <span class="s">0.5</span>, <span class="s">1.5</span>)</pre>
+      <p>Big rocks hit hard but fly slow. When one smashes it turns back into rubble, so the same debris keeps getting thrown around the whole match.</p>
+      <div class="tags"><span>#physics</span><span>#design</span></div>
+    </article>
+    <hr>
+    <article>
+      <div class="date">2026-10-12 · 3 min read</div>
+      <h2>Keeping everyone's page identical</h2>
+      <p>The server owns the terrain. Every change goes out as a tiny op, like "carve a circle here with this seed", and the server applies its own ops the same way every client does. Same ops, same order, same page, down to the last cell.</p>
+      <pre>ops: [[<span class="s">'c'</span>, x, y, r, seed, frac, power], [<span class="s">'b'</span>, cell, color, ...]]</pre>
+      <div class="tags"><span>#networking</span></div>
+    </article>
+  </main>
+  <aside>
+    <div class="box"><div class="avatar"></div><h3>hi, i'm owl</h3><p>I make small loud games. Usually at 3am.</p></div>
+    <div class="box"><h3>Popular</h3><p>→ Rubble physics for beginners</p><p>→ Why my jetpack has fuel</p><p>→ Fonts ranked by hardness</p></div>
+    <div class="glow">Subscribe for more chaos</div>
+  </aside>
+</div>
+<footer>© 2026 night owl · made with too much coffee</footer>
+</body>
+</html>

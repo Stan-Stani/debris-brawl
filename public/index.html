@@ -1,0 +1,105 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Debris Brawl</title>
+<meta name="description" content="Type an address, smash the page to bits, throw the bits at your friends.">
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body>
+<canvas id="game" aria-label="Game"></canvas>
+
+<main id="menu" class="screen">
+  <div class="card">
+    <h1>DEBRIS <span>BRAWL</span></h1>
+    <p class="tag">Type an address. Smash the page to bits. Pick up the bits and throw them at your friends.</p>
+
+    <form id="addr" autocomplete="off">
+      <input id="url" type="text" placeholder="any website, e.g. example.com" spellcheck="false" aria-label="Website address">
+    </form>
+    <p class="or">or wreck one of ours</p>
+    <div id="maps" class="maps"></div>
+
+    <label class="field">Your name <input id="name" maxlength="16" autocomplete="off"></label>
+
+    <div class="modes">
+      <section>
+        <h2>Fight alone</h2>
+        <div class="row">
+          <button id="solo" class="primary" type="button">Play</button>
+          <label class="field small">Bots
+            <select id="bots"><option>0</option><option>1</option><option>2</option><option selected>3</option><option>4</option><option>5</option></select>
+          </label>
+        </div>
+      </section>
+      <section>
+        <h2>Multiplayer</h2>
+        <div class="row">
+          <button id="quick" type="button">Quick match</button>
+          <button id="create" type="button">Create room</button>
+        </div>
+        <div class="row">
+          <input id="code" maxlength="6" placeholder="ROOM CODE" aria-label="Room code" autocomplete="off">
+          <button id="join" type="button">Join</button>
+        </div>
+      </section>
+    </div>
+    <p id="menuerr" class="err" role="alert"></p>
+
+    <details class="help">
+      <summary>Controls</summary>
+      <dl>
+        <dt>A / D, ← / →</dt><dd>Run</dd>
+        <dt>Space / W</dt><dd>Jump, tap again to flip, hold to fly</dd>
+        <dt>S</dt><dd>Drop through text, hold to fall through</dd>
+        <dt>Mouse</dt><dd>Aim, left click shoots</dd>
+        <dt>Right click / G</dt><dd>Grenade</dd>
+        <dt>1 – 5 / wheel</dt><dd>Pistol, SMG, Shotgun, Rocket, Railgun</dd>
+        <dt>E</dt><dd>Pick up debris, or catch a chunk in the air. E again drops it</dd>
+        <dt>Holding debris</dt><dd>Hold left click to wind up, release to throw. Bigger rocks hurt more</dd>
+        <dt>Tab · Esc · M</dt><dd>Scores · menu · sound</dd>
+      </dl>
+    </details>
+  </div>
+</main>
+
+<div id="loading" class="screen hidden">
+  <div class="card narrow">
+    <p id="loadmsg">Loading</p>
+    <div class="bar"><div id="loadbar"></div></div>
+    <button id="loadcancel" type="button">Cancel</button>
+  </div>
+</div>
+
+<div id="pause" class="screen hidden">
+  <div class="card narrow">
+    <h2>Menu</h2>
+    <p id="roominfo"></p>
+    <div class="row">
+      <button id="resume" class="primary" type="button">Resume</button>
+      <button id="copy" type="button">Copy invite link</button>
+    </div>
+    <div id="hostctl">
+      <h3>Wreck a different page</h3>
+      <div class="row">
+        <input id="url2" type="text" placeholder="any website" spellcheck="false" aria-label="Website address">
+        <button id="loadurl" type="button">Load</button>
+      </div>
+      <div id="maps2" class="maps small"></div>
+      <div class="row">
+        <button id="botadd" type="button">+ Bot</button>
+        <button id="botdel" type="button">− Bot</button>
+      </div>
+      <p id="pauseerr" class="err" role="alert"></p>
+    </div>
+    <p id="guestnote" class="hint hidden">The host picks the page. The match keeps going while this menu is open.</p>
+    <label class="check"><input type="checkbox" id="sound" checked> Sound</label>
+    <button id="leave" type="button">Leave</button>
+  </div>
+</div>
+
+<script type="module" src="/js/main.js"></script>
+</body>
+</html>

@@ -132,24 +132,35 @@ try {
   await sleep(400);
   await a.screenshot({ path: path.join(OUT, 'a-holding.png') });
 
-  // aim at B (search for the angle that lands on B's chest) and throw at full power
+  // aim at B with the real mouse (search for the angle that lands on B's chest), hold to wind up, release
   const hp0 = await b.evaluate(() => window.__game.players.get(window.__game.me.id).hp);
-  await a.evaluate(async () => {
+  const aimAt = () => a.evaluate(async () => {
     const { throwVelocity } = await import('/shared/debris.js');
     const g = window.__game, me = g.me.body, sp = g.heldSprite();
     let target = null;
     for (const p of g.players.values()) if (p.id !== g.me.id) target = p.snaps.at(-1);
     const sx = me.x, sy = me.y - 34 - sp.rad - 1, tx = target.x, ty = target.y - 17;
     let best = 0, err = 1e9;
-    for (let a = -1.2; a <= 0.6; a += 0.002) {
-      const v = throwVelocity(a, 1, sp.n, 0, 0);
+    for (let ang = -1.2; ang <= 0.6; ang += 0.002) {
+      const v = throwVelocity(ang, 1, sp.n, 0, 0);
       const t = (tx - sx) / v.vx;
       if (t <= 0) continue;
       const y = sy + v.vy * t + 0.5 * 1300 * t * t;
-      if (Math.abs(y - ty) < err) { err = Math.abs(y - ty); best = a; }
+      if (Math.abs(y - ty) < err) { err = Math.abs(y - ty); best = ang; }
     }
-    g.net.send({ t: 'th', a: best, p: 1 });
+    // the screen point that makes the client aim at that angle (aim is measured from the shoulder)
+    const wx = me.x + Math.cos(best) * 160, wy = me.y - 22 + Math.sin(best) * 160;
+    return { x: ((wx - g.cam.x) * g.zoom) / g.dpr, y: ((wy - g.cam.y) * g.zoom) / g.dpr };
   });
+  for (let i = 0; i < 4; i++) { const p = await aimAt(); await a.mouse.move(p.x, p.y); await sleep(350); } // camera follows the mouse a bit
+  await a.mouse.down();
+  await sleep(500);
+  const charging = await a.evaluate(() => window.__game.me.charging && window.__game.me.charge > 0.3);
+  await a.screenshot({ path: path.join(OUT, 'a-charging.png') });
+  await sleep(400);
+  { const p = await aimAt(); await a.mouse.move(p.x, p.y); }
+  await a.mouse.up();
+  check('holding the mouse winds up a throw', charging);
   const hit = await waitFor(b, (h) => window.__game.players.get(window.__game.me.id).hp < h, hp0, 3000);
   const hp1 = await b.evaluate(() => window.__game.players.get(window.__game.me.id).hp);
   check('thrown debris hurts the other player', hit, `B hp ${hp0} -> ${hp1}`);

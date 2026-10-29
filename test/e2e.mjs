@@ -186,6 +186,26 @@ try {
   check('bots wreck the page', after < before, `${before} -> ${after}`);
   await s.screenshot({ path: path.join(OUT, 'solo-shop.png') });
 
+  // shards of broken boxes lie around; walk up to one and lift it with E
+  await s.evaluate(() => { for (const p of window.__game.players.values()) if (p.bot) window.__game.net.send({ t: 'bot', add: false }); });
+  const shard = await s.evaluate(() => {
+    const g = window.__game;
+    let best = null;
+    for (const e of g.ents.values()) {
+      const sp = e.k === 2 && g.sprites.get(e.id);
+      if (sp && sp.smooth && sp.n > 110 && sp.n <= 3000 && !e.vx && !e.vy && (!best || sp.n > best.n)) best = { id: e.id, x: e.x, y: e.y, n: sp.n };
+    }
+    return best;
+  });
+  check('broken boxes leave big shards lying around', !!shard, shard ? `${shard.n} cells` : 'none');
+  if (shard) {
+    await s.evaluate(([x, y]) => { const g = window.__game, b = g.me.body; Object.assign(b, { x, y: y + 17, vx: 0, vy: 0 }); g.sendState(); }, [shard.x, shard.y]);
+    await s.keyboard.press('KeyE');
+    check('E lifts a shard', await waitFor(s, (id) => window.__game.players.get(window.__game.me.id)?.hold === id, shard.id, 3000));
+    await sleep(500);
+    await s.screenshot({ path: path.join(OUT, 'solo-shard.png') });
+  }
+
   for (const id of ['wiki', 'devlog']) {
     await s.click('canvas');
     await s.keyboard.press('Escape');

@@ -23,7 +23,7 @@ export function chunkSprite(cols) {
   x.putImageData(img, 0, 0);
   // positioned on the rock's centre of mass, the same point the server moves
   const S2 = S * CELL;
-  return { cv, dx: -(R + 0.5 + shape.ox) * CELL, dy: -(R + 0.5 + shape.oy) * CELL, dw: S2, dh: S2, cols, n: cols.length, rad: shape.rad, off: shape.off, smooth: false };
+  return { cv, dx: -(R + 0.5 + shape.ox) * CELL, dy: -(R + 0.5 + shape.oy) * CELL, dw: S2, dh: S2, cols, n: cols.length, rad: shape.rad, down: shape.down, off: shape.off, smooth: false };
 }
 
 // Rocks are pixel art (no smoothing); letters and shards are real page pixels (smoothed when turned).

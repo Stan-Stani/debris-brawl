@@ -108,15 +108,17 @@ export function pieceShape(ix, iy) {
   for (let k = 0; k < n; k++) { sx += ix[k]; sy += iy[k]; }
   const ox = sx / n, oy = sy / n, off = new Float32Array(2 * n), at = new Map(), edge = [];
   for (let k = 0; k < n; k++) at.set(key(ix[k], iy[k]), k);
-  let r2 = 0, inertia = 0;
+  let r2 = 0, inertia = 0, low = 0;
   for (let k = 0; k < n; k++) {
     const dx = ix[k] - ox, dy = iy[k] - oy, d2 = dx * dx + dy * dy;
     off[2 * k] = dx; off[2 * k + 1] = dy;
     r2 = Math.max(r2, d2);
+    low = Math.max(low, dy);
     inertia += d2 + 1 / 6;
     if (!at.has(key(ix[k] + 1, iy[k])) || !at.has(key(ix[k] - 1, iy[k])) || !at.has(key(ix[k], iy[k] + 1)) || !at.has(key(ix[k], iy[k] - 1))) edge.push(k);
   }
-  return { n, ix, iy, ox, oy, off, edge, at, key, rad: (Math.sqrt(r2) + 0.75) * CELL, inertia: inertia * CELL * CELL };
+  // down: how far its lowest cell reaches below the centre (to carry it just over a head)
+  return { n, ix, iy, ox, oy, off, edge, at, key, rad: (Math.sqrt(r2) + 0.75) * CELL, down: (low + 0.5) * CELL, inertia: inertia * CELL * CELL };
 }
 
 // cells of the page itself (a letter, a shard of a box)
@@ -132,7 +134,7 @@ export function rockShape(n) {
 
 // Heavier chunks fly slower; full charge throws hard.
 export function throwVelocity(a, power, n, bvx = 0, bvy = 0) {
-  const mass = Math.min(1.1, Math.max(0.7, 1.15 - n / 160));
+  const mass = Math.min(1.1, Math.max(0.4, 1.1 / (1 + n / 250))); // a slab of a page flies a lot slower than a pebble
   const s = (DEBRIS.minSpeed + (DEBRIS.maxSpeed - DEBRIS.minSpeed) * power) * mass;
   return { vx: Math.cos(a) * s + bvx * 0.4, vy: Math.sin(a) * s + bvy * 0.2 };
 }

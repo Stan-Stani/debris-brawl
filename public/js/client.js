@@ -84,7 +84,11 @@ export class ClientGame {
     this.players.clear();
     for (const [id, name, color, bot] of m.players) this.addPlayer(id, name, color, bot);
     this.ents.clear(); this.sprites.clear();
-    for (const [id, cols, idx] of m.chunks) this.sprites.set(id, idx ? this.pieceSprite(idx, cols) : chunkSprite(cols));
+    const now = performance.now() / 1000;
+    for (const [id, cols, idx, pose] of m.chunks) {
+      this.sprites.set(id, idx ? this.pieceSprite(idx, cols) : chunkSprite(cols));
+      if (pose) this.ents.set(id, { id, k: 2, x: pose[0], y: pose[1], vx: 0, vy: 0, rot: pose[2], at: now, born: now });
+    }
     this.ghosts.length = 0; this.tracers.length = 0; this.fx.length = 0; this.floaters.length = 0;
     Object.assign(this.me, { body: null, alive: false, charge: 0, charging: false, thrownId: 0 });
     this.round = [0, -1];
@@ -133,7 +137,9 @@ export class ClientGame {
       if (!en) this.ents.set(e[0], en = { id: e[0], k: e[1], born: now });
       en.x = e[2]; en.y = e[3]; en.vx = e[4]; en.vy = e[5]; en.rot = e[6]; en.at = now;
     }
-    for (const id of this.ents.keys()) if (!seen.has(id)) this.ents.delete(id);
+    // rockets and grenades vanish from updates when they're done; pieces asleep on the page aren't resent,
+    // so those only go away on their own events (grab, settle, smash, gone)
+    for (const [id, en] of this.ents) if (!seen.has(id) && en.k !== 2) this.ents.delete(id);
     if (this.round[0] === 0 && m.r[0] === 1) this.showBoard = false;
     this.round = m.r;
   }
@@ -219,7 +225,7 @@ export class ClientGame {
         break;
       }
       case 'crack': this.sound('crunch', { x: e[1], y: e[2] }, 0.6); this.sparks(e[1], e[2], this.ink, 8); break;
-      case 'grab': this.sound('grab', this.posOf(e[1])); break;
+      case 'grab': this.ents.delete(e[2]); this.sound('grab', this.posOf(e[1])); break;
       case 'throw': if (e[1] !== me.id) this.sound('throw', this.posOf(e[1])); break;
       case 'smash': {
         const [, id, x, y, vx, vy, rot, seed] = e;
@@ -241,7 +247,7 @@ export class ClientGame {
         this.sparks(e[2], e[3], '#ffffff', 10);
         break;
       case 'nograb':
-        if (e[1] === me.id) { this.toast('No loose debris in reach. Blast something first!'); this.sfx.play('nograb'); }
+        if (e[1] === me.id) { this.toast(e[2] ? 'That piece is too heavy to lift. Break it up first!' : 'No loose debris in reach. Blast something first!'); this.sfx.play('nograb'); }
         break;
       case 'end': this.sfx.play('end'); this.showBoard = true; break;
     }
@@ -328,7 +334,7 @@ export class ClientGame {
       idx.forEach((i, k) => { c.fillStyle = this.cssOf(cols[k]); c.fillRect(((i % g.w) - x0) * CELL, (((i / g.w) | 0) - y0) * CELL, CELL, CELL); });
     }
     const dx = (x0 - shape.ox - 0.5) * CELL, dy = (y0 - shape.oy - 0.5) * CELL;
-    const sp = { cv, dx, dy, dw: w, dh: h, n: idx.length, rad: shape.rad, cols, off: shape.off, smooth: true };
+    const sp = { cv, dx, dy, dw: w, dh: h, n: idx.length, rad: shape.rad, down: shape.down, cols, off: shape.off, smooth: true };
     if (idx.length <= 40) return sp; // letters stay as they are
     // shards of a box get a thin rim, so a white piece still reads against a white page
     const rim = document.createElement('canvas');
@@ -666,7 +672,9 @@ export class ClientGame {
     const tnow = performance.now() / 1000;
     for (const e of this.ents.values()) {
       const d = Math.min(0.12, tnow - e.at);
-      const x = e.x + e.vx * d, y = e.y + e.vy * d + (e.k ? 0.5 * (e.k === 1 ? GRENADE.gravity : DEBRIS.gravity) * d * d : 0);
+      const moving = e.vx || e.vy; // a piece asleep on the page doesn't fall any further
+      const x = e.x + e.vx * d, y = e.y + e.vy * d + (e.k && moving ? 0.5 * (e.k === 1 ? GRENADE.gravity : DEBRIS.gravity) * d * d : 0);
+      e.drawX = x; e.drawY = y;
       if (e.k === 0) {
         drawRocket(ctx, x, y, Math.atan2(e.vy, e.vx), this.ink);
         if (Math.random() < 0.7) this.fx.push({ k: 'smoke', x, y, vx: (Math.random() - 0.5) * 20, vy: -10, r: 3 + Math.random() * 3, t: 0, dur: 0.5 });
@@ -705,13 +713,14 @@ export class ClientGame {
       Object.assign(s, { phase: p.phase, color: p.color, name: p.name, hp: p.hp });
       p.draw = s;
       drawStick(ctx, s, this.ink, now);
-      if (s.holding) drawChunk(ctx, s.holding, s.x - s.face * 5 * (s.charge || 0), s.y - P.h - s.holding.rad - 1, 0);
+      if (s.holding) drawChunk(ctx, s.holding, s.x - s.face * 5 * (s.charge || 0), s.y - P.h - s.holding.down - 1, 0);
       if (p.id !== me.id) drawTag(ctx, s, this.ink, this.paper, p.hp < 100);
     }
 
-    // where a throw would go
+    // where a throw would go, or what E would pick up
     const held = me.alive && me.body ? this.heldSprite() : null;
     if (held) this.drawArc(ctx, held);
+    else if (me.alive && me.body) this.drawGrabHint(ctx, now);
 
     for (const t of this.tracers) {
       ctx.strokeStyle = '#ffd36b'; ctx.lineWidth = 1.6;
@@ -733,7 +742,7 @@ export class ClientGame {
     const me = this.me, b = me.body;
     const power = me.charging ? me.charge : 0;
     const v = throwVelocity(me.aim, power, sp.n, b.vx, b.vy);
-    let x = b.x, y = b.y - P.h - sp.rad - 1, vx = v.vx, vy = v.vy;
+    let x = b.x, y = b.y - P.h - sp.down - 1, vx = v.vx, vy = v.vy;
     ctx.fillStyle = me.charging ? (this.dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)') : (this.dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)');
     for (let i = 0; i < 40; i++) {
       for (let k = 0; k < 3; k++) { vy += DEBRIS.gravity * 0.01; x += vx * 0.01; y += vy * 0.01; }
@@ -741,10 +750,31 @@ export class ClientGame {
       if (i % 2 === 0) ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
     }
     if (me.charging) { // charge meter over the rock
-      const cx = b.x, cy = b.y - P.h - sp.rad * 2 - 10;
+      const cx = b.x, cy = b.y - P.h - sp.down * 2 - 10;
       ctx.fillStyle = this.paper; ctx.fillRect(cx - 16, cy, 32, 5);
       ctx.fillStyle = me.charge >= 1 ? '#ff4d4d' : '#ffd23f'; ctx.fillRect(cx - 15, cy + 1, 30 * me.charge, 3);
     }
+  }
+
+  // The piece E would grab (same rule as the server: nearest one within reach), marked with a key badge.
+  drawGrabHint(ctx, now) {
+    const b = this.me.body, cx = b.x, cy = b.y - P.h / 2;
+    let best = null, bd = Infinity;
+    for (const e of this.ents.values()) {
+      const sp = e.k === 2 && this.sprites.get(e.id);
+      if (!sp || e.drawX === undefined) continue;
+      const d = Math.hypot(e.drawX - cx, e.drawY - cy) - sp.rad;
+      if (d < DEBRIS.reach && d < bd) { best = { e, sp }; bd = d; }
+    }
+    if (!best) return;
+    const heavy = best.sp.n > DEBRIS.carryMax, x = best.e.drawX, y = best.e.drawY - Math.min(best.sp.rad, 40) - 12 + Math.sin(now * 6) * 2;
+    ctx.save();
+    ctx.font = '800 10px system-ui, sans-serif'; ctx.textAlign = 'center'; ctx.textBaseline = 'middle';
+    ctx.fillStyle = heavy ? 'rgba(120,120,120,0.85)' : '#ffd23f';
+    ctx.strokeStyle = this.ink; ctx.lineWidth = 1.5;
+    ctx.beginPath(); ctx.roundRect(x - 8, y - 8, 16, 16, 3); ctx.fill(); ctx.stroke();
+    ctx.fillStyle = '#141414'; ctx.fillText('E', x, y + 0.5);
+    ctx.restore();
   }
 
   drawFx(ctx, f) {

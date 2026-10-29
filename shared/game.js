@@ -35,7 +35,7 @@ export class Game {
     this.W = grid.w * CELL; this.H = grid.h * CELL;
     this.ents = new Map(); this.bullets = []; this.parts = [];
     this.ops = []; this.ev = []; this.fallQ = [];
-    this.nextEnt = 1; this.seq = 1; this.time = 0;
+    this.nextEnt = 1; this.seq = 1; this.time = 0; this.tickN = 0;
     this.rev = (this.rev ?? 0) + 1; // bumps on every terrain change
     this.blockDmg = new Float32Array(grid.blockCount + 1);
     this.blockGone = new Uint8Array(grid.blockCount + 1);
@@ -175,11 +175,13 @@ export class Game {
     if (p.hold || this.time < p.grabCd) return;
     p.grabCd = this.time + DEBRIS.grabCd;
     const cx = p.body.x, cy = p.body.y - P.h / 2, R = DEBRIS.reach;
-    let near = null, nd = Infinity;
+    let near = null, nd = Infinity, heavy = false;
     for (const c of this.ents.values()) {
-      if (c.k !== 'c' || c.holder || c.n > DEBRIS.carryMax || (c.owner === p.id && c.immune > 0)) continue;
+      if (c.k !== 'c' || c.holder || (c.owner === p.id && c.immune > 0)) continue;
       const d = Math.hypot(c.x - cx, c.y - cy) - c.rad;
-      if (d < R && d < nd) { near = c; nd = d; }
+      if (d >= R) continue;
+      if (c.n > DEBRIS.carryMax) { heavy = true; continue; }
+      if (d < nd) { near = c; nd = d; }
     }
     if (near) { this.pickUp(p, near); return; }
     const g = this.grid, rc = R / CELL, gx = cx / CELL, gy = cy / CELL, found = [];
@@ -191,7 +193,7 @@ export class Game {
         if (d <= rc * rc) found.push([d, k]);
       }
     }
-    if (found.length < DEBRIS.minCells) { this.ev.push(['nograb', p.id]); return; }
+    if (found.length < DEBRIS.minCells) { this.ev.push(['nograb', p.id, heavy ? 1 : 0]); return; }
     found.sort((a, b) => a[0] - b[0]);
     const take = found.slice(0, DEBRIS.maxCells).map((f) => f[1]);
     const cols = take.map((k) => g.col[k]);
@@ -202,14 +204,14 @@ export class Game {
   }
 
   pickUp(p, c) {
-    c.holder = p.id; c.owner = p.id; c.rot = 0; c.av = 0; c.thrown = false; c.hits = null;
+    c.holder = p.id; c.owner = p.id; c.rot = 0; c.av = 0; c.thrown = false; c.hits = null; c.sleep = false; c.rest = 0;
     p.hold = c.id;
     this.holdPos(c, p);
     this.ev.push(['grab', p.id, c.id]);
   }
 
   holdPos(c, p) { // carried over the head
-    c.x = p.body.x; c.y = p.body.y - P.h - c.rad - 1;
+    c.x = p.body.x; c.y = p.body.y - P.h - c.shape.down - 1;
     c.vx = p.body.vx; c.vy = p.body.vy;
   }
 
@@ -219,7 +221,8 @@ export class Game {
     if (!c || c.holder !== p.id) return;
     const v = throwVelocity(a, power, c.n, p.body.vx, p.body.vy);
     c.holder = 0; c.owner = p.id; c.immune = 0.25; c.vx = v.vx; c.vy = v.vy; c.thrown = true; c.hits = null;
-    c.av = (Math.cos(a) >= 0 ? 1 : -1) * (5 + 9 * power); c.age = 0; c.rest = 0;
+    // big slabs tumble lazily; a pebble spins fast
+    c.av = (Math.cos(a) >= 0 ? 1 : -1) * (5 + 9 * power) * Math.min(1, (8 * CELL) / c.rad); c.age = 0; c.rest = 0;
     p.grabCd = this.time + 0.25; p.prot = 0;
     this.ev.push(['throw', p.id, c.id]);
   }
@@ -236,6 +239,7 @@ export class Game {
 
   step(dt) {
     this.time += dt;
+    this.tickN++;
     const R = this.round;
     if (this.timed) {
       R.t -= dt;
@@ -324,7 +328,7 @@ export class Game {
         }
         const ch = this.chunkAt(b.x, b.y);
         if (ch) {
-          if (ch.page) { ch.vx += b.vx * 0.06; ch.vy += b.vy * 0.06 - 60; ch.av += (this.rand() - 0.5) * 10; ch.rest = 0; } // shoot letters around
+          if (ch.page) { ch.vx += b.vx * 0.06; ch.vy += b.vy * 0.06 - 60; ch.av += (this.rand() - 0.5) * 10; ch.rest = 0; ch.sleep = false; } // shoot pieces around
           else this.smash(ch);
           return false;
         }
@@ -385,7 +389,7 @@ export class Game {
       const dx = c.x - x, dy = c.y - y, d = Math.hypot(dx, dy);
       if (d >= reach) continue;
       const k = (700 * (1 - d / reach)) / (d || 1);
-      c.vx += dx * k; c.vy += dy * k; c.rest = 0;
+      c.vx += dx * k; c.vy += dy * k; c.rest = 0; c.sleep = false;
     }
   }
 
@@ -447,7 +451,7 @@ export class Game {
     }
     if (!idx.length) return;
     // a few random seeds; every cell joins the nearest one
-    const n = Math.max(2, Math.min(12, Math.round(Math.sqrt(idx.length) / 9)));
+    const n = Math.max(2, Math.min(30, Math.ceil(idx.length / 1800))); // most shards stay light enough to lift
     const seeds = [];
     for (let s = 0; s < n; s++) { const i = idx[Math.floor(this.rand() * idx.length)]; seeds.push(i % g.w, (i / g.w) | 0); }
     const parts = Array.from({ length: n }, () => []);
@@ -523,6 +527,11 @@ export class Game {
       if (p && p.alive && p.hold === c.id) { this.holdPos(c, p); return; }
       c.holder = 0; // carrier is gone: let it fall
     }
+    if (c.sleep) {
+      // lying still: only check now and then that the page under it is still there
+      if ((this.tickN + c.id) % 12 || this.pieceContact(c, c.x, c.y + 2, c.rot)) return;
+      c.sleep = false; c.rest = 0;
+    }
     c.age += dt; c.immune -= dt;
     c.vy = Math.min(1200, c.vy + DEBRIS.gravity * dt);
     const speed = Math.hypot(c.vx, c.vy);
@@ -533,19 +542,22 @@ export class Game {
       if (hurts && speed >= DEBRIS.hurtSpeed) {
         const hit = this.pieceHitsPlayer(c, nx, ny, nr);
         if (hit) {
-          const n = Math.min(c.n, DEBRIS.maxCells);
+          const n = Math.min(c.n, DEBRIS.hurtCells);
           const dmg = throwDamage(n, Math.hypot(c.vx - hit.body.vx, c.vy - hit.body.vy)) * (c.thrown ? 1 : 0.5);
           const kick = (n * 3 + 150) / (speed || 1);
           this.damage(hit, dmg, c.owner, 'debris', c.vx * kick, c.vy * kick - 80);
           this.ev.push(['crunch', hit.id, r1(nx), r1(ny)]);
-          if (c.thrown) { this.smash(c); return; }
+          if (c.thrown && c.n <= DEBRIS.maxCells) { this.smash(c); return; } // rocks and letters burst; a slab keeps going
           (c.hits ??= new Set()).add(hit.id);
           c.vx *= 0.5; c.vy *= 0.5;
         }
       }
       const at = this.pieceContact(c, nx, ny, nr);
       if (at) {
-        if (c.thrown && speed > DEBRIS.smash) { this.impact(c, nx, ny, speed); return; }
+        if (c.thrown && speed > DEBRIS.smash) {
+          if (c.n <= DEBRIS.maxCells) { this.impact(c, nx, ny, speed, true); return; }
+          this.impact(c, at.x, at.y, speed, false); // a slab dents the page and stays whole
+        }
         // only the turn is blocked: keep sliding, lose the spin
         if (nr !== c.rot && !this.pieceContact(c, nx, ny, c.rot)) { c.x = nx; c.y = ny; c.av *= 0.5; continue; }
         this.collide(c, at);
@@ -563,7 +575,10 @@ export class Game {
     c.px = c.x; c.py = c.y; c.pr = c.rot;
     const still = moved < 0.6 || (Math.hypot(c.vx, c.vy) < 60 && Math.abs(c.av) < 2.5);
     c.rest = still && this.pieceContact(c, c.x, c.y + 2, c.rot) ? c.rest + dt : 0;
-    if (c.rest > (c.page ? 1.2 : 0.35) || c.age > 12) this.settle(c);
+    // rocks are sand again as soon as they stop; letters and shards stay whole, asleep, until picked up
+    // (or until there are too many and the oldest settles into the page)
+    if (!c.page && (c.rest > 0.35 || c.age > 12)) this.settle(c);
+    else if (c.page && c.rest > 0.6) { c.sleep = true; c.sent = false; c.vx = 0; c.vy = 0; c.av = 0; }
   }
 
   // Where (if anywhere) the piece's outline at this pose touches the page.
@@ -620,17 +635,17 @@ export class Game {
   }
 
   // A thrown piece slamming into the page: crater, nearby letters fly, and it bursts into sand.
-  impact(c, x, y, speed) {
+  impact(c, x, y, speed, burst) {
     const r = Math.min(c.rad, 14) * 0.7 + speed * 0.006;
     this.carve(x, y, r, 0.55, 220);
     this.blast(x, y, r * 1.8, c.owner, 320);
-    const splash = Math.min(c.rad, 14) + 18, dmg = throwDamage(Math.min(c.n, DEBRIS.maxCells), speed) * 0.4;
+    const splash = Math.min(c.rad, 14) + 18, dmg = throwDamage(Math.min(c.n, DEBRIS.hurtCells), speed) * 0.4;
     for (const p of this.players.values()) {
       if (!p.alive || (p.id === c.owner && c.immune > 0)) continue;
       const d = Math.hypot(p.body.x - x, p.body.y - P.h / 2 - y);
       if (d < splash) this.damage(p, dmg * (1 - d / splash), c.owner, 'debris', 0, -120);
     }
-    this.smash(c);
+    if (burst) this.smash(c);
   }
 
   // A piece at rest goes back into the page as rubble, keeping its shape (and angle).
@@ -811,8 +826,11 @@ export class Game {
     return [...this.players.values()].map((p) => [p.id, p.name, p.color, p.bot ? 1 : 0]);
   }
 
-  chunkList() { // loose pieces a joiner needs to draw: rocks by colour, page pieces by their cells
-    return [...this.ents.values()].filter((e) => e.k === 'c').map((c) => (c.page ? [c.id, c.cols, c.idx] : [c.id, c.cols]));
+  // loose pieces a joiner needs to draw: rocks by colour, page pieces by their cells, and where each lies
+  // (asleep ones aren't in updates)
+  chunkList() {
+    return [...this.ents.values()].filter((e) => e.k === 'c')
+      .map((c) => [c.id, c.cols, c.page ? c.idx : null, c.holder ? null : [r1(c.x), r1(c.y), r3(c.rot)]]);
   }
 
   welcome(id) {
@@ -828,7 +846,8 @@ export class Game {
     }
     const es = [];
     for (const e of this.ents.values()) {
-      if (e.k === 'c' && e.holder) continue;
+      if (e.k === 'c' && (e.holder || (e.sleep && e.sent))) continue; // asleep: sent once, then left alone
+      if (e.sleep) e.sent = true;
       es.push([e.id, e.k === 'r' ? 0 : e.k === 'g' ? 1 : 2, r1(e.x), r1(e.y), r1(e.vx), r1(e.vy), r2(e.rot || 0)]);
     }
     const m = {

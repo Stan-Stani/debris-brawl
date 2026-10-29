@@ -4,7 +4,7 @@ import { Game } from '../shared/game.js';
 import { applyOp } from '../shared/debris.js';
 import { newBody } from '../shared/physics.js';
 import { TICK, NET_TICKS, TEXT, RUBBLE, EMPTY } from '../shared/const.js';
-import { testGrid } from './helpers.js';
+import { testGrid, flatGrid } from './helpers.js';
 
 const steps = (game, seconds, onFlush) => {
   for (let t = 0; t < seconds / TICK; t++) {
@@ -43,14 +43,17 @@ test('a bullet knocks a whole letter loose, intact, and leaves its neighbours al
   assert.ok(ent.page && ent.n === 12);
 });
 
-test('a loose letter lands and settles back into the page in its own shape', () => {
+test('a loose letter lands and lies there whole (asleep) until there are too many, then settles in its shape', () => {
   const { game } = arena();
   game.detachGlyph(9, 40, -200, 0, false);
-  const id = [...game.ents.keys()].at(-1);
-  let settled = null;
-  steps(game, 8, (m) => { settled ??= m.ev?.find((e) => e[0] === 'settle' && e[1] === id); });
-  assert.ok(settled, 'it should come to rest and settle');
-  assert.ok(!game.ents.has(id));
+  const id = [...game.ents.keys()].at(-1), c = game.ents.get(id);
+  steps(game, 6);
+  assert.ok(game.ents.has(id) && c.sleep, 'it comes to rest and stays a piece you can pick up');
+  game.flush(); // its last pose goes out once
+  const sent = [];
+  steps(game, 0.5, (m) => sent.push(...m.es.filter((e) => e[0] === id)));
+  assert.equal(sent.length, 0, 'asleep pieces are not resent every update');
+  game.settle(c);
   const rubble = count(game.grid, (i) => game.grid.mat[i] === RUBBLE);
   assert.ok(rubble >= 10 && rubble <= 14, `about the letter's 12 cells come back as rubble (got ${rubble})`);
 });
@@ -88,7 +91,7 @@ test('a rocket sends nearby letters flying and the page stays in sync for a clie
   assert.ok(flying >= 5, `letters fly (${flying})`);
   steps(game, 10, replay);
   assert.ok(client.equals(game.grid), 'client grid matches the server after pieces fly and settle');
-  assert.equal(game.ents.size, 0, 'everything has settled');
+  assert.ok([...game.ents.values()].every((c) => c.sleep), 'every loose piece has come to rest');
 });
 
 test('you can pick up a loose letter and throw it', () => {
@@ -117,4 +120,35 @@ test('glyph and box ownership survives encoding', () => {
   assert.equal(g2.glyphCount, 41);
   assert.equal(count(g2, (i) => g2.mat[i] === TEXT && g2.own[i] === 0), 0);
   assert.equal(count(g2, (i) => g2.mat[i] === EMPTY && g2.own[i] !== 0), 0);
+});
+
+test('big shards of a box can be lifted and thrown; ones over the limit are too heavy', () => {
+  const game = new Game(flatGrid(), { seed: 8, timed: false });
+  const a = game.addPlayer('Ana'), v = game.addPlayer('Vik');
+  steps(game, 0.6);
+  Object.assign(a.body, newBody(60, 240)); a.prot = 0;
+  Object.assign(v.body, newBody(175, 240)); v.prot = 0;
+  // a 1250-cell slab out of the floor, lying next to Ana
+  const idx = [];
+  for (let y = 125; y < 150; y++) for (let x = 150; x < 200; x++) idx.push(y * 200 + x);
+  const big = game.breakOff(idx, 0, 0, 0, 0, false);
+  big.x = 70; big.y = 200; big.sleep = true;
+  game.handle(a.id, { t: 'e' });
+  assert.equal(a.hold, big.id, 'a 1250-cell shard can be lifted');
+  assert.ok(Math.abs(big.y - (240 - 34 - big.shape.down - 1)) < 0.01, 'carried just over the head');
+  game.handle(a.id, { t: 'th', a: -0.15, p: 1 });
+  let hit = null;
+  for (let t = 0; t < 90 && !hit; t++) { game.step(TICK); hit = game.flush().ev?.find((e) => e[0] === 'hit' && e[1] === v.id); }
+  assert.ok(hit && hit[2] >= 20, `a thrown slab hurts (${hit?.[2]})`);
+  steps(game, 4);
+  assert.ok(game.ents.has(big.id), 'and stays whole to be thrown again');
+
+  const huge = [];
+  for (let y = 120; y < 150; y++) for (let x = 0; x < 120; x++) huge.push(y * 200 + x); // 3600 cells
+  const slab = game.breakOff(huge, 0, 0, 0, 0, false);
+  slab.x = 70; slab.y = 160; slab.sleep = true;
+  game.time += 1;
+  game.handle(a.id, { t: 'e' });
+  assert.equal(a.hold, 0);
+  assert.ok(game.flush().ev.some((e) => e[0] === 'nograb' && e[1] === a.id && e[2] === 1), 'too heavy says so');
 });

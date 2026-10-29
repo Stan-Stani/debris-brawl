@@ -122,9 +122,10 @@ function send(url, addr, { method = 'GET', headers = {}, body = null, timeoutMs 
   });
 }
 
-// Headers a browser may pass on for a page's own requests (no hop-by-hop, no Host: we set our own).
-const FORWARD = ['accept', 'accept-language', 'content-type', 'cookie', 'origin', 'referer', 'user-agent', 'x-requested-with',
-  'next-router-state-tree', 'next-url', 'rsc', 'next-router-prefetch'];
+// A page's own request headers go along as the browser sent them (its auth tokens included: they're the
+// site's, for the host the page asked, in a throwaway browser session), minus the connection-level ones.
+const DONT_FORWARD = new Set(['host', 'connection', 'content-length', 'transfer-encoding', 'upgrade', 'te', 'trailer', 'keep-alive',
+  'accept-encoding', 'proxy-authorization', 'proxy-connection', 'expect']);
 const DROP_BACK = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'alt-svc', 'strict-transport-security']);
 
 // One request on behalf of the headless browser (server/render.js), under the same rules as everything
@@ -141,7 +142,7 @@ export async function proxyFetch(raw, { method = 'GET', headers = {}, body = nul
   const url = parseTarget(raw);
   const addr = await resolvePublic(url.hostname);
   const out = {};
-  for (const k of FORWARD) if (headers[k] !== undefined) out[k] = String(headers[k]);
+  for (const [k, v] of Object.entries(headers)) if (!DONT_FORWARD.has(k.toLowerCase()) && !k.startsWith(':') && v !== undefined) out[k] = String(v);
   if (body && body.length > 1_000_000) throw new UserError('Request too big.');
   const res = await send(url, addr, { method, headers: out, body, timeoutMs });
   const back = {};

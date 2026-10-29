@@ -1,14 +1,27 @@
 // Stickman movement against the page grid. Runs on the server for bots and in the browser for your own player.
-import { CELL, PLAYER as P, SOLID, TEXT, RUBBLE } from './const.js';
+import { CELL, PLAYER as P, SOLID, TEXT, RUBBLE, WALL } from './const.js';
 
 export function newBody(x, y) {
   return { x, y, vx: 0, vy: 0, ground: false, coyote: 0, air: 1, fuel: P.fuel, flipT: 0, lock: 0, drop: 0, flying: false };
 }
 
-const blocks = (m) => m === SOLID || m === RUBBLE;
+// Like the original, the page's boxes are platforms, not walls: you land on their top edges and pass
+// through them otherwise (so a page full of big cards stays playable). Rubble piles and the edges of
+// the world are the only things that stop you sideways.
+const blocks = (m) => m === RUBBLE || m === WALL;
+
+// Something to land on: a letter, or the top edge of a box (where it starts, or where another box sits on it).
+function surface(g, cx, cy) {
+  const m = g.at(cx, cy);
+  if (m === TEXT) return true;
+  if (m !== SOLID) return false;
+  if (cy === 0) return true;
+  const i = cy * g.w + cx, up = i - g.w;
+  return g.mat[up] !== SOLID || g.own[up] !== g.own[i];
+}
 const approach = (v, t, d) => (v < t ? Math.min(t, v + d) : Math.max(t, v - d));
 
-// Feet at (x, y). Solid and rubble block from every side; text is a one-way ledge.
+// Feet at (x, y): does the body overlap anything that blocks from every side?
 export function boxHits(g, x, y) {
   const x0 = Math.floor((x - P.w / 2) / CELL), x1 = Math.floor((x + P.w / 2 - 0.01) / CELL);
   const y0 = Math.floor((y - P.h) / CELL), y1 = Math.floor((y - 0.01) / CELL);
@@ -16,12 +29,12 @@ export function boxHits(g, x, y) {
   return false;
 }
 
-// Feet moving down from y to ny step into a new row that has text under them.
+// Feet moving down from y to ny step into a new row that has something to land on.
 function ledge(g, x, y, ny) {
   const r0 = Math.floor((y - 0.01) / CELL), r1 = Math.floor((ny - 0.01) / CELL);
   if (r1 <= r0) return false;
   const x0 = Math.floor((x - P.w / 2) / CELL), x1 = Math.floor((x + P.w / 2 - 0.01) / CELL);
-  for (let cx = x0; cx <= x1; cx++) if (g.at(cx, r1) === TEXT) return true;
+  for (let cx = x0; cx <= x1; cx++) if (surface(g, cx, r1)) return true;
   return false;
 }
 
@@ -93,6 +106,6 @@ export function canStand(g, x, y) {
   if (boxHits(g, x, y)) return false;
   const row = Math.floor(y / CELL);
   const x0 = Math.floor((x - P.w / 2) / CELL), x1 = Math.floor((x + P.w / 2 - 0.01) / CELL);
-  for (let cx = x0; cx <= x1; cx++) if (g.at(cx, row) !== 0) return true;
+  for (let cx = x0; cx <= x1; cx++) if (surface(g, cx, row) || g.at(cx, row) === RUBBLE) return true;
   return false;
 }

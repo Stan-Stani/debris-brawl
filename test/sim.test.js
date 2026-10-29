@@ -59,18 +59,25 @@ test('text is a one-way ledge: land on it, jump up through it, drop through it',
   assert.ok(minY < 160, 'should rise past the text line');
 
   stepBody(b, { ...stillInput(), down: true, dp: true }, g, TICK);
-  for (let i = 0; i < 60; i++) stepBody(b, { ...stillInput(), down: true }, g, TICK);
-  assert.equal(b.y, 240, 'held S drops through to the floor');
+  for (let i = 0; i < 60; i++) stepBody(b, stillInput(), g, TICK);
+  assert.equal(b.y, 240, 'a tap of S drops through the text to the floor');
 });
 
-test('solid walls stop you sideways', () => {
+test("rubble stops you sideways; the page's boxes don't, you land on their tops", () => {
   const g = testGrid();
   const b = newBody(240, 240);
   for (let i = 0; i < 20; i++) stepBody(b, stillInput(), g, TICK);
-  // a wall on the floor
-  for (let y = 100; y < 120; y++) for (let x = 140; x < 145; x++) g.set(y * g.w + x, 1, 0xff0000ff);
+  for (let y = 100; y < 120; y++) for (let x = 140; x < 145; x++) g.set(y * g.w + x, RUBBLE, 0xff0000ff);
   for (let i = 0; i < 90; i++) stepBody(b, { ...stillInput(), r: true }, g, TICK);
-  assert.ok(b.x <= 140 * CELL - PLAYER.w / 2 + 0.01, `should stop at the wall, x=${b.x}`);
+  assert.ok(b.x <= 140 * CELL - PLAYER.w / 2 + 0.01, `a pile of rubble stops you, x=${b.x}`);
+  const g2 = testGrid(); // a box standing on the floor in the way: x 280..300, y 200..240
+  for (let y = 100; y < 120; y++) for (let x = 140; x < 150; x++) g2.set(y * g2.w + x, 1, 0xff00ff00, -1);
+  const c = newBody(255, 240);
+  for (let i = 0; i < 90; i++) stepBody(c, { ...stillInput(), r: true }, g2, TICK);
+  assert.ok(c.x > 360, `you walk through a box, x=${c.x}`);
+  const d = newBody(320, 100);
+  for (let i = 0; i < 90; i++) stepBody(d, stillInput(), g2, TICK);
+  assert.equal(d.y, 120, 'and land on its top edge');
 });
 
 test('scoop rubble, throw it at someone, it hurts them and breaks apart', () => {

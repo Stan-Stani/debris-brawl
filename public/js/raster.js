@@ -84,13 +84,14 @@ async function rasterize(html, base, proxied, progress) {
     await timeout(doc.fonts?.ready ?? Promise.resolve(), 3000);
     const H = Math.min(MAX_H, Math.max(MIN_H, doc.documentElement.scrollHeight, doc.body.scrollHeight));
 
-    progress('Painting the boxes', 0.3);
+    progress('Fetching the pictures', 0.3);
     const blocks = makeCanvas(LAYOUT_W, H), text = makeCanvas(LAYOUT_W, H), back = makeCanvas(LAYOUT_W, H);
     const pageBg = pageBackground(doc, win);
-    const { media, boxes } = paintBoxes(doc, win, blocks, back, pageBg, H);
+    const items = collect(doc, win, H);
+    await loadPictures(items, proxied);
 
-    progress('Painting the pictures', 0.45);
-    await paintMedia(media, blocks, proxied, boxes);
+    progress('Painting the boxes and pictures', 0.45);
+    const boxes = paintInOrder(items, blocks, back, pageBg);
 
     progress('Painting the words', 0.6);
     const letters = await paintText(doc, win, text, H, progress);
@@ -116,10 +117,10 @@ function pageBackground(doc, win) {
   return [255, 255, 255, 1];
 }
 
-// Paints every element's background and borders. Returns the pictures still to paint, and the box of
-// every element that put something solid on the page (so it can later crack off as one piece).
-function paintBoxes(doc, win, ctx, bctx, pageBg, H) {
-  const media = [], boxes = [];
+// Every visible element in page order: boxes and pictures get painted in this order, so a box sitting on a
+// photo ends up on top of it, like in the browser.
+function collect(doc, win, H) {
+  const items = [];
   for (const el of doc.body.querySelectorAll('*')) {
     const tag = el.localName;
     if (SKIP.has(tag)) continue;
@@ -128,22 +129,48 @@ function paintBoxes(doc, win, ctx, bctx, pageBg, H) {
     if (cs.display === 'none' || cs.visibility !== 'visible' || Number(cs.opacity) < 0.1) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > H || r.right < 0 || r.left > LAYOUT_W) continue;
-    if (MEDIA.has(tag) || (tag === 'input' && el.type === 'image')) { media.push({ el, r, cs, tag }); continue; }
+    items.push({ el, r, cs, tag, media: MEDIA.has(tag) || (tag === 'input' && el.type === 'image') });
+  }
+  return items;
+}
+
+// Paints each element's background and borders, and each picture. Returns the box of every element that
+// put something solid on the page (so it can later crack off as one piece).
+function paintInOrder(items, ctx, bctx, pageBg) {
+  const boxes = [];
+  for (const { r, cs, media, img } of items) {
+    const rect = [r.left, r.top, r.right, r.bottom];
+    if (media) {
+      if (!(img && drawImageSafe(ctx, img, r, cs))) placeholder(ctx, r);
+      boxes.push(rect); // a picture breaks off as one piece too
+      continue;
+    }
     const bg = parseColor(cs.backgroundColor);
     if (bg && bg[3] > 0.15) {
-      // the same colour as the page, or huge: scenery behind the fight rather than something to stand on
-      const scenery = near(bg, pageBg) || r.width * r.height > BIG_BOX || (r.width > LAYOUT_W * 0.9 && r.height > 330);
+      // huge, or the same colour as the page with only page under it: scenery behind the fight
+      const huge = r.width * r.height > BIG_BOX || (r.width > LAYOUT_W * 0.9 && r.height > 330);
+      const scenery = huge || (near(bg, pageBg) && !onTerrain(ctx, r));
       const c = scenery ? bctx : ctx;
       c.fillStyle = cs.backgroundColor;
       const rad = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
       c.beginPath();
       if (rad > 1) c.roundRect(r.left, r.top, r.width, r.height, rad); else c.rect(r.left, r.top, r.width, r.height);
       c.fill();
-      if (!scenery) { boxes.push([r.left, r.top, r.right, r.bottom]); paintBorders(ctx, r, cs); continue; }
+      if (!scenery) { boxes.push(rect); paintBorders(ctx, r, cs); continue; }
     }
-    if (paintBorders(ctx, r, cs)) boxes.push([r.left, r.top, r.right, r.bottom]);
+    if (paintBorders(ctx, r, cs)) boxes.push(rect);
   }
-  return { media, boxes };
+  return boxes;
+}
+
+// Is most of this rectangle already covered by something solid (a photo, a coloured band)?
+function onTerrain(ctx, r) {
+  let n = 0;
+  for (const [fx, fy] of [[0.5, 0.5], [0.25, 0.25], [0.75, 0.25], [0.25, 0.75], [0.75, 0.75]]) {
+    const x = Math.floor(r.left + r.width * fx), y = Math.floor(r.top + r.height * fy);
+    if (x >= 0 && y >= 0 && x < ctx.canvas.width && y < ctx.canvas.height && ctx.getImageData(x, y, 1, 1).data[3] > 200) n++;
+  }
+  return n >= 3;
 }
 
 function paintBorders(ctx, r, cs) {
@@ -186,21 +213,18 @@ function svgSource(el, r, cs) {
   return URL.createObjectURL(blob);
 }
 
-async function paintMedia(media, ctx, proxied, boxes) {
-  const jobs = media.slice(0, 160).map(async ({ el, r, cs, tag }) => {
+async function loadPictures(items, proxied) {
+  const media = items.filter((it) => it.media).slice(0, 160);
+  await Promise.all(media.map(async (it) => {
+    const { el, r, cs, tag } = it;
     let src = null, blob = false;
     if (tag === 'img' || tag === 'input') src = el.currentSrc || el.src;
     else if (tag === 'video') src = el.poster || null;
     else if (tag === 'svg') { src = svgSource(el, r, cs); blob = true; }
     if (src && proxied && /^https?:/i.test(src)) src = `/api/asset?url=${encodeURIComponent(src)}`;
-    const img = src ? await loadImg(src).catch(() => null) : null;
+    it.img = src ? await loadImg(src).catch(() => null) : null;
     if (blob) URL.revokeObjectURL(src);
-    return { r, cs, img };
-  });
-  for (const { r, cs, img } of await Promise.all(jobs)) {
-    if (!(img && drawImageSafe(ctx, img, r, cs))) placeholder(ctx, r);
-    boxes.push([r.left, r.top, r.right, r.bottom]); // a picture breaks off as one piece too
-  }
+  }));
 }
 
 // Draw through a scratch canvas first: a picture that would taint the canvas becomes a placeholder.
@@ -253,7 +277,9 @@ async function paintText(doc, win, ctx, H, progress) {
       const cs = win.getComputedStyle(el), col = parseColor(cs.color);
       if (!col || col[3] < 0.2 || cs.visibility !== 'visible' || Number(cs.opacity) < 0.1) continue;
       ok = true;
-      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${cs.fontFamily}`;
+      // the site's web fonts can't be used here, so make sure the fallback is a sans-serif rather than Times
+      const family = /\b(serif|sans-serif|monospace|cursive|fantasy|system-ui)\b/i.test(cs.fontFamily) ? cs.fontFamily : `${cs.fontFamily}, sans-serif`;
+      ctx.font = `${cs.fontStyle} ${cs.fontWeight} ${cs.fontSize} ${family}`;
       ctx.fillStyle = cs.color;
       descent = ctx.measureText('Hg').fontBoundingBoxDescent || parseFloat(cs.fontSize) * 0.22;
       transform = cs.textTransform;

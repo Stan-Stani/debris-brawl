@@ -6,6 +6,7 @@ export const MAX_H = 3200;        // and cut off this tall
 export const MIN_H = 900;
 
 export const EMPTY = 0, SOLID = 1, TEXT = 2, RUBBLE = 3;
+export const WALL = 255; // the edges of the world (never stored in a map)
 
 export const TICK = 1 / 60;
 export const NET_TICKS = 2;       // server sends an update every 2 ticks (30 Hz)

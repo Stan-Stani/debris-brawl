@@ -166,6 +166,9 @@ export function cleanHtml(html, base) {
     .replace(/<\/?(iframe|frame|frameset|object|embed|applet|portal|base|audio|source|track)\b[^>]*>/gi, '')
     .replace(/<meta\b[^>]*http-equiv[^>]*>/gi, '')
     .replace(/\son[a-z]+\s*=\s*("[^"]*"|'[^']*'|[^\s>]+)/gi, '')
+    // `crossorigin` / `integrity` make the browser demand CORS headers the site only sends to itself,
+    // which blocks its stylesheets when laid out here; plain links load fine (scripts stay off regardless)
+    .replace(/\s(crossorigin|integrity)(\s*=\s*("[^"]*"|'[^']*'|[^\s>]+))?(?=[\s/>])/gi, '')
     .replace(/(href|src|action|formaction)\s*=\s*(["']?)\s*javascript:/gi, '$1=$2about:blank#');
   const tag = `<base href="${attr(base)}">`;
   return /<head\b[^>]*>/i.test(s) ? s.replace(/<head\b[^>]*>/i, (h) => h + tag) : tag + s;

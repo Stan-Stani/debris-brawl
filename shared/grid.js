@@ -1,5 +1,5 @@
 // The page as a grid of cells: what each cell is made of and its colour, plus a non-colliding backdrop.
-import { CELL, EMPTY, RUBBLE, LAYOUT_W, MAX_H } from './const.js';
+import { CELL, EMPTY, RUBBLE, WALL, LAYOUT_W, MAX_H } from './const.js';
 
 // Colours are stored as 0xAABBGGRR so they drop straight into ImageData.
 export const rgb = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
@@ -37,7 +37,7 @@ export class Grid {
 
   // Off the sides is wall, above and below is open air.
   at(cx, cy) {
-    if (cx < 0 || cx >= this.w) return 1;
+    if (cx < 0 || cx >= this.w) return WALL;
     if (cy < 0 || cy >= this.h) return EMPTY;
     return this.mat[cy * this.w + cx];
   }

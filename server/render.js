@@ -26,7 +26,9 @@ const waiting = [];
 
 export const canRender = () => !!CHROME && process.env.RENDER !== 'off';
 
-function browser() {
+async function browser() {
+  const b = await launching?.catch(() => null);
+  if (b && !b.isConnected()) launching = null; // it died: start a fresh one
   launching ??= chromium.launch({
     executablePath: CHROME,
     headless: true,
@@ -35,6 +37,7 @@ function browser() {
       '--proxy-server=127.0.0.1:9', '--proxy-bypass-list=<-loopback>', // nothing reaches the network by itself
       '--webrtc-ip-handling-policy=disable_non_proxied_udp', '--force-webrtc-ip-handling-policy',
       '--dns-prefetch-disable', '--disable-background-networking', '--no-pings',
+      '--disable-gpu', // headless needs none, and on a machine without a display it's what crashes
     ],
   }).then((b) => { b.on('disconnected', () => { launching = null; }); return b; }, (e) => { launching = null; throw e; });
   return launching;
@@ -85,6 +88,16 @@ function snapshot() {
 export async function renderPage(raw) {
   if (!canRender()) throw new UserError('Rendering is off.');
   const target = parseTarget(raw);
+  try {
+    return await renderOnce(target);
+  } catch (e) {
+    if (!/closed|crash|disconnected/i.test(e.message)) throw e;
+    launching = null; // Chrome went away under us: one more go with a fresh one
+    return renderOnce(target);
+  }
+}
+
+async function renderOnce(target) {
   await slot();
   let ctx = null;
   try {
@@ -114,12 +127,21 @@ export async function renderPage(raw) {
     page.on('popup', (p) => p.close().catch(() => {}));
     await page.goto(start, { waitUntil: 'domcontentloaded', timeout: Math.max(1000, until - Date.now() - 4000) });
     // give its scripts a moment to fetch and draw (bounded), and nudge anything that loads on scroll
-    await page.waitForLoadState('networkidle', { timeout: Math.max(500, Math.min(6000, until - Date.now() - 3000)) }).catch(() => {});
+    await page.waitForLoadState('networkidle', { timeout: Math.max(500, Math.min(6000, until - Date.now() - 4000)) }).catch(() => {});
+    // nudge anything that loads on scroll, then wait for the content to stop changing (lists filling in)
     await page.evaluate(async () => {
       for (let y = 0; y < 3200; y += 800) { window.scrollTo(0, y); await new Promise((r) => setTimeout(r, 120)); }
       window.scrollTo(0, 0);
     }).catch(() => {});
-    await page.waitForTimeout(Math.max(0, Math.min(800, until - Date.now() - 1000)));
+    await page.evaluate(async (ms) => {
+      const end = Date.now() + ms;
+      let last = -1, same = 0;
+      while (Date.now() < end && same < 4) {
+        const n = (document.body?.innerText.length ?? 0) + document.getElementsByTagName('*').length;
+        if (n === last) same++; else { same = 0; last = n; }
+        await new Promise((r) => setTimeout(r, 250));
+      }
+    }, Math.max(0, until - Date.now() - 2000)).catch(() => {});
     const html = await page.evaluate(snapshot);
     if (html.length > 6_000_000) throw new UserError('That page is too big.');
     const finalUrl = page.url();

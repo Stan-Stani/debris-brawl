@@ -54,7 +54,7 @@ async function api(req, res, url) {
         try {
           return json(res, 200, await renderPage(target));
         } catch (e) {
-          console.warn('render failed, loading it without its scripts:', target, e.message); // the static fetch re-checks everything
+          console.warn('render failed, loading it without its scripts:', target, String(e.message).split('\n')[0]); // the static fetch re-checks everything
         }
       }
       return json(res, 200, await fetchPage(target));

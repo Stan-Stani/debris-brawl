@@ -201,9 +201,19 @@ try {
   if (shard) {
     await s.evaluate(([x, y]) => { const g = window.__game, b = g.me.body; Object.assign(b, { x, y: y + 17, vx: 0, vy: 0 }); g.sendState(); }, [shard.x, shard.y]);
     await s.keyboard.press('KeyE');
-    check('E lifts a shard', await waitFor(s, (id) => window.__game.players.get(window.__game.me.id)?.hold === id, shard.id, 3000));
+    // E takes the nearest piece in reach: usually this shard, sometimes a smaller one lying on it
+    check('E lifts a piece lying there', await waitFor(s, () => !!window.__game.players.get(window.__game.me.id)?.hold, null, 3000));
     await sleep(500);
     await s.screenshot({ path: path.join(OUT, 'solo-shard.png') });
+    // tap E again: the solo match (running in the page) should get a throw, not a drop
+    await s.evaluate(() => {
+      const game = window.__game.net.game, t = game.throwChunk.bind(game), d = game.drop.bind(game);
+      game.throwChunk = (...a) => { window.__did = 'throw'; return t(...a); };
+      game.drop = (...a) => { window.__did = 'drop'; return d(...a); };
+    });
+    await s.keyboard.press('KeyE');
+    const flew = await waitFor(s, () => window.__did === 'throw' && !window.__game.players.get(window.__game.me.id)?.hold, null, 3000);
+    check('tapping E again throws it', flew);
   }
 
   for (const id of ['wiki', 'devlog']) {

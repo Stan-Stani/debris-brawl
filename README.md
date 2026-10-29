@@ -29,8 +29,8 @@ Use `HOST=127.0.0.1 npm start` to keep it local, `PORT=…` to change the port.
 | Mouse, left click | Aim, shoot |
 | Right click / G | Grenade |
 | 1–5, wheel | Pistol, SMG, Shotgun, Rocket, Railgun |
-| **E** | **Scoop up nearby rubble (or catch a chunk in mid-air). E again drops it** |
-| **Holding debris** | **Hold left click to wind up, release to throw. Bigger chunks hit harder but fly slower** |
+| **E** | **Pick up a loose letter, shard or rubble (or catch one in mid-air)** |
+| **E again** | **Throw it: tap to toss along the arc, hold E (or left click) to wind up harder. Bigger pieces hit harder but fly slower** |
 | Tab · Esc · M | Scores · menu (change page, add bots, invite) · sound |
 
 ## How it works

@@ -400,7 +400,7 @@ export class ClientGame {
         if (down && !inp.down) inp.dp = true;
         inp.down = down;
         break;
-      case 'KeyE': case 'KeyF': if (down && !e.repeat) this.grabPressed = true; break;
+      case 'KeyE': case 'KeyF': this.eHeld = down; if (down && !e.repeat) this.grabPressed = true; break;
       case 'KeyG': case 'KeyQ': if (down && !e.repeat) this.nadePressed = true; break;
       case 'KeyM': if (down) { this.sfx.setOn(!this.sfx.on); this.toast(this.sfx.on ? 'Sound on' : 'Sound off'); } break;
       default:
@@ -410,7 +410,7 @@ export class ClientGame {
 
   clearInput() {
     Object.assign(this.input, { l: false, r: false, jump: false, down: false, jp: false, dp: false });
-    this.mouse.down = false; this.mouse.pressed = false;
+    this.mouse.down = false; this.mouse.pressed = false; this.eHeld = false;
   }
 
   setPaused(p) {
@@ -461,9 +461,10 @@ export class ClientGame {
   act(dt, held) {
     const me = this.me, m = this.mouse;
     if (held) {
-      if (m.pressed) me.charging = true;
+      // E (or left click) throws: tap for a toss along the arc, hold to wind up harder
+      if (m.pressed || this.grabPressed) me.charging = true;
       if (me.charging) {
-        if (m.down) me.charge = Math.min(1, me.charge + dt / DEBRIS.charge);
+        if (m.down || this.eHeld) me.charge = Math.min(1, me.charge + dt / DEBRIS.charge);
         else {
           this.net.send({ t: 'th', a: r3(me.aim), p: r3(me.charge) });
           me.thrownId = this.players.get(me.id)?.hold ?? 0;
@@ -471,7 +472,6 @@ export class ClientGame {
           this.sfx.play('throw');
         }
       }
-      if (this.grabPressed) { this.net.send({ t: 'e' }); me.thrownId = this.players.get(me.id)?.hold ?? 0; me.charging = false; me.charge = 0; }
     } else {
       me.charging = false; me.charge = 0;
       const W = WEAPONS[me.weapon];
@@ -897,7 +897,7 @@ export class ClientGame {
     }
     if (this.heldSprite() && me.alive) {
       ctx.textAlign = 'center'; ctx.font = '700 12px system-ui, sans-serif';
-      const tip = 'Hold left click to wind up, let go to throw · E drops it';
+      const tip = 'Tap E to toss it along the arc · hold E (or left click) to throw harder';
       ctx.fillStyle = panel; ctx.fillRect(W / 2 - ctx.measureText(tip).width / 2 - 10, H - 80, ctx.measureText(tip).width + 20, 22);
       ctx.fillStyle = txt; ctx.fillText(tip, W / 2, H - 69);
     }

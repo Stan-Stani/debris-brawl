@@ -17,3 +17,16 @@ export async function unpackGrid(b64) {
   for (let i = 0; i < s.length; i++) z[i] = s.charCodeAt(i);
   return Grid.decode(await pipe(z, new DecompressionStream('deflate')));
 }
+
+// A canvas as an image data URL to send with the map (WebP where the browser can make it, else PNG).
+export async function packImage(canvas) {
+  if (!canvas) return null;
+  const blob = await new Promise((r) => canvas.toBlob(r, 'image/webp', 0.92));
+  if (!blob) return null;
+  return new Promise((resolve) => {
+    const fr = new FileReader();
+    fr.onload = () => resolve(fr.result);
+    fr.onerror = () => resolve(null);
+    fr.readAsDataURL(blob);
+  });
+}

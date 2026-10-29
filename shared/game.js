@@ -6,10 +6,12 @@ import {
   ROUND_TIME, END_TIME, RESPAWN_TIME, SPAWN_PROTECT, MAX_PLAYERS, FL_FLY, FL_FLIP, FL_PROT, FL_CHARGE,
 } from './const.js';
 import { newBody, stepBody, canStand } from './physics.js';
-import { applyOp, stepParticle, discCells, chunkRadius, throwVelocity, throwDamage, smashParticles } from './debris.js';
+import { applyOp, stepParticle, rockShape, pageShape, throwVelocity, throwDamage, smashParticles } from './debris.js';
 import { rng } from './rng.js';
 
 const MAX_PARTS = 2500;
+const MAX_PIECES = 160;   // loose rigid pieces at once; past this the oldest settles where it is
+const MAX_BLAST_GLYPHS = 60;
 const r1 = (v) => Math.round(v * 10) / 10;
 const r2 = (v) => Math.round(v * 100) / 100;
 const r3 = (v) => Math.round(v * 1000) / 1000;
@@ -35,6 +37,8 @@ export class Game {
     this.ops = []; this.ev = []; this.fallQ = [];
     this.nextEnt = 1; this.seq = 1; this.time = 0;
     this.rev = (this.rev ?? 0) + 1; // bumps on every terrain change
+    this.blockDmg = new Float32Array(grid.blockCount + 1);
+    this.blockGone = new Uint8Array(grid.blockCount + 1);
     this.round = { state: 'play', t: ROUND_TIME };
     for (const p of this.players.values()) this.resetPlayer(p);
     this.needsReload = true;
@@ -166,15 +170,18 @@ export class Game {
     this.ev.push(['nade', p.id]);
   }
 
-  // E: catch a loose chunk in reach, else scoop the nearest rubble into one.
+  // E: grab the nearest loose piece in reach (a rock, a letter, a shard), else scoop rubble into a rock.
   grab(p) {
     if (p.hold || this.time < p.grabCd) return;
     p.grabCd = this.time + DEBRIS.grabCd;
     const cx = p.body.x, cy = p.body.y - P.h / 2, R = DEBRIS.reach;
+    let near = null, nd = Infinity;
     for (const c of this.ents.values()) {
-      if (c.k !== 'c' || c.holder || (c.owner === p.id && c.immune > 0)) continue;
-      if ((c.x - cx) ** 2 + (c.y - cy) ** 2 < (R + c.rad) ** 2) { this.pickUp(p, c); return; }
+      if (c.k !== 'c' || c.holder || c.n > DEBRIS.carryMax || (c.owner === p.id && c.immune > 0)) continue;
+      const d = Math.hypot(c.x - cx, c.y - cy) - c.rad;
+      if (d < R && d < nd) { near = c; nd = d; }
     }
+    if (near) { this.pickUp(p, near); return; }
     const g = this.grid, rc = R / CELL, gx = cx / CELL, gy = cy / CELL, found = [];
     for (let j = Math.max(0, Math.floor(gy - rc)); j <= Math.min(g.h - 1, Math.floor(gy + rc)); j++) {
       for (let i = Math.max(0, Math.floor(gx - rc)); i <= Math.min(g.w - 1, Math.floor(gx + rc)); i++) {
@@ -189,13 +196,13 @@ export class Game {
     const take = found.slice(0, DEBRIS.maxCells).map((f) => f[1]);
     const cols = take.map((k) => g.col[k]);
     this.op(['x', ...take]);
-    const c = this.addEnt({ k: 'c', owner: p.id, holder: 0, cols, n: cols.length, rad: chunkRadius(cols.length), x: cx, y: cy, vx: 0, vy: 0, rot: 0, av: 0, immune: 0, age: 0, rest: 0 });
+    const c = this.addPiece(cols, rockShape(cols.length), cx, cy, { owner: p.id });
     this.ev.push(['chunk', c.id, cols]);
     this.pickUp(p, c);
   }
 
   pickUp(p, c) {
-    c.holder = p.id; c.owner = p.id; c.rot = 0; c.av = 0;
+    c.holder = p.id; c.owner = p.id; c.rot = 0; c.av = 0; c.thrown = false; c.hits = null;
     p.hold = c.id;
     this.holdPos(c, p);
     this.ev.push(['grab', p.id, c.id]);
@@ -211,7 +218,7 @@ export class Game {
     p.hold = 0;
     if (!c || c.holder !== p.id) return;
     const v = throwVelocity(a, power, c.n, p.body.vx, p.body.vy);
-    c.holder = 0; c.owner = p.id; c.immune = 0.25; c.vx = v.vx; c.vy = v.vy;
+    c.holder = 0; c.owner = p.id; c.immune = 0.25; c.vx = v.vx; c.vy = v.vy; c.thrown = true; c.hits = null;
     c.av = (Math.cos(a) >= 0 ? 1 : -1) * (5 + 9 * power); c.age = 0; c.rest = 0;
     p.grabCd = this.time + 0.25; p.prot = 0;
     this.ev.push(['throw', p.id, c.id]);
@@ -221,7 +228,7 @@ export class Game {
     const c = this.ents.get(p.hold);
     p.hold = 0;
     if (!c) return;
-    c.holder = 0; c.immune = 0.5; c.age = 0; c.rest = 0;
+    c.holder = 0; c.immune = 0.5; c.age = 0; c.rest = 0; c.thrown = false;
     this.ev.push(['throw', p.id, c.id]);
   }
 
@@ -256,7 +263,7 @@ export class Game {
       if (!this.ents.has(e.id)) continue;
       if (e.k === 'r') this.stepRocket(e, dt);
       else if (e.k === 'g') this.stepGrenade(e, dt);
-      else this.stepChunk(e, dt);
+      else this.stepPiece(e, dt);
     }
     this.stepParts(dt);
     this.collapse();
@@ -284,7 +291,7 @@ export class Game {
   }
 
   chunkAt(x, y) {
-    for (const c of this.ents.values()) if (c.k === 'c' && !c.holder && (c.x - x) ** 2 + (c.y - y) ** 2 < c.rad * c.rad) return c;
+    for (const c of this.ents.values()) if (c.k === 'c' && !c.holder && (c.x - x) ** 2 + (c.y - y) ** 2 < (c.rad * 0.7) ** 2) return c;
     return null;
   }
 
@@ -294,18 +301,6 @@ export class Game {
       if (!p.alive) continue;
       const b = p.body;
       if (x0 + CELL > b.x - P.w / 2 && x0 < b.x + P.w / 2 && y0 + CELL > b.y - P.h && y0 < b.y) return true;
-    }
-    return false;
-  }
-
-  circleHits(x, y, r) {
-    const g = this.grid, rc = r / CELL, gx = x / CELL, gy = y / CELL;
-    for (let j = Math.floor(gy - rc); j <= Math.floor(gy + rc); j++) {
-      for (let i = Math.floor(gx - rc); i <= Math.floor(gx + rc); i++) {
-        if (g.at(i, j) === EMPTY) continue;
-        const dx = i + 0.5 - gx, dy = j + 0.5 - gy;
-        if (dx * dx + dy * dy <= rc * rc) return true;
-      }
     }
     return false;
   }
@@ -328,11 +323,13 @@ export class Game {
           return false;
         }
         const ch = this.chunkAt(b.x, b.y);
-        if (ch) { this.smash(ch); return false; }
-        const m = g.atPx(b.x, b.y);
-        if (m !== EMPTY) {
-          this.carve(b.x, b.y, W.hole, 0.6, 170);
-          b.pierce -= m === SOLID ? 2 : 1;
+        if (ch) {
+          if (ch.page) { ch.vx += b.vx * 0.06; ch.vy += b.vy * 0.06 - 60; ch.av += (this.rand() - 0.5) * 10; ch.rest = 0; } // shoot letters around
+          else this.smash(ch);
+          return false;
+        }
+        if (g.atPx(b.x, b.y) !== EMPTY) {
+          b.pierce -= this.hitTerrain(b.x, b.y, W, b.vx / W.speed, b.vy / W.speed, b.owner);
           if (b.pierce <= 0) return false;
         }
       }
@@ -372,8 +369,9 @@ export class Game {
   }
 
   explode(x, y, R, dmg, owner, cause) {
-    this.carve(x, y, R * 0.8, 0.55, 280); // most of a crater lands nearby as rubble you can scoop
+    this.carve(x, y, R * 0.55, 0.55, 280); // the middle turns to sand you can scoop
     this.ev.push(['boom', r1(x), r1(y), R]);
+    this.blast(x, y, R * 1.05, owner, 560); // around it, letters fly and boxes crack
     const reach = R * 1.6;
     for (const p of this.players.values()) {
       if (!p.alive) continue;
@@ -391,7 +389,135 @@ export class Game {
     }
   }
 
-  stepChunk(c, dt) {
+  // ---- what the page is made of: letters come off whole, boxes wear down and crack ----
+
+  // A bullet reaching the page. Returns how much of the bullet's pierce it used up.
+  hitTerrain(x, y, W, dx, dy, owner) {
+    const g = this.grid, i = Math.floor(y / CELL) * g.w + Math.floor(x / CELL);
+    const inside = x >= 0 && x < this.W && y >= 0 && y < this.H;
+    const o = inside ? g.own[i] : 0, m = inside ? g.mat[i] : SOLID;
+    if (o > 0) { // a letter: knock the whole thing loose
+      this.detachGlyph(o, dx * 230 + (this.rand() - 0.5) * 80, dy * 230 - 140 - this.rand() * 90, owner, false);
+      return 1;
+    }
+    if (o < 0) { // a box: chip it, and enough hits crack it apart
+      this.carve(x, y, W.hole * 0.6, 0.6, 150);
+      this.damageBlock(-o, W.dmg, x, y, dx * 200, dy * 200, owner, 140);
+      return 2;
+    }
+    this.carve(x, y, W.hole, 0.6, 170);
+    return m === SOLID ? 2 : 1;
+  }
+
+  detachGlyph(gid, vx, vy, owner, harm) {
+    const g = this.grid, t = g.glyphs, q = (gid - 1) * 4, idx = [];
+    for (let y = t[q + 1]; y <= t[q + 3]; y++) for (let x = t[q]; x <= t[q + 2]; x++) if (g.own[y * g.w + x] === gid) idx.push(y * g.w + x);
+    if (idx.length) this.breakOff(idx, vx, vy, (this.rand() - 0.5) * 16, owner, harm);
+  }
+
+  blockHp(bid) {
+    const t = this.grid.blocks, q = (bid - 1) * 4;
+    return 30 + 0.6 * Math.sqrt((t[q + 2] - t[q] + 1) * (t[q + 3] - t[q + 1] + 1)) * CELL; // a button takes a few shots, a card a rocket or two
+  }
+
+  damageBlock(bid, amt, x, y, vx, vy, owner, kick) {
+    if (this.blockGone[bid]) return;
+    this.blockDmg[bid] += amt;
+    if (this.blockDmg[bid] >= this.blockHp(bid)) this.breakBlock(bid, x, y, vx, vy, owner, kick);
+  }
+
+  // A box cracks into a few rigid shards, taking along whatever sits on it (its text, smaller boxes).
+  breakBlock(bid, hx, hy, vx, vy, owner, kick) {
+    const g = this.grid, B = g.blocks, G = g.glyphs, q0 = (bid - 1) * 4;
+    const x0 = B[q0], y0 = B[q0 + 1], x1 = B[q0 + 2], y1 = B[q0 + 3], area = (x1 - x0 + 1) * (y1 - y0 + 1);
+    const within = (t, q) => t[q] >= x0 && t[q + 1] >= y0 && t[q + 2] <= x1 && t[q + 3] <= y1;
+    this.blockGone[bid] = 1;
+    const idx = [];
+    for (let y = y0; y <= y1; y++) {
+      for (let x = x0; x <= x1; x++) {
+        const i = y * g.w + x, o = g.own[i];
+        if (!o) continue; // loose rubble stays put
+        if (o < 0 && o !== -bid) {
+          const q = (-o - 1) * 4;
+          if (!within(B, q) || (B[q + 2] - B[q] + 1) * (B[q + 3] - B[q + 1] + 1) >= area) continue; // a parent box underneath
+          this.blockGone[-o] = 1;
+        } else if (o > 0 && !within(G, (o - 1) * 4)) continue;
+        idx.push(i);
+      }
+    }
+    if (!idx.length) return;
+    // a few random seeds; every cell joins the nearest one
+    const n = Math.max(2, Math.min(12, Math.round(Math.sqrt(idx.length) / 9)));
+    const seeds = [];
+    for (let s = 0; s < n; s++) { const i = idx[Math.floor(this.rand() * idx.length)]; seeds.push(i % g.w, (i / g.w) | 0); }
+    const parts = Array.from({ length: n }, () => []);
+    for (const i of idx) {
+      const x = i % g.w, y = (i / g.w) | 0;
+      let best = 0, bd = Infinity;
+      for (let s = 0; s < n; s++) { const d = (x - seeds[2 * s]) ** 2 + (y - seeds[2 * s + 1]) ** 2; if (d < bd) { bd = d; best = s; } }
+      parts[best].push(i);
+    }
+    for (const part of parts) {
+      if (!part.length) continue;
+      let sx = 0, sy = 0;
+      for (const i of part) { sx += i % g.w; sy += (i / g.w) | 0; }
+      const dx = (sx / part.length + 0.5) * CELL - hx, dy = (sy / part.length + 0.5) * CELL - hy, d = Math.hypot(dx, dy) || 1;
+      const s = kick * (0.5 + this.rand());
+      this.breakOff(part, vx * 0.5 + (dx / d) * s, vy * 0.5 + (dy / d) * s - 60, (this.rand() - 0.5) * 6, owner, kick > 420);
+    }
+    this.ev.push(['crack', r1(hx), r1(hy)]);
+  }
+
+  // Everything still attached near a blast: letters fly off, boxes take damage.
+  blast(x, y, R, owner, power) {
+    const g = this.grid, rc = R / CELL, gx = x / CELL, gy = y / CELL, glyphs = new Map(), blocks = new Map();
+    for (let j = Math.max(0, Math.floor(gy - rc)); j <= Math.min(g.h - 1, Math.floor(gy + rc)); j++) {
+      for (let i = Math.max(0, Math.floor(gx - rc)); i <= Math.min(g.w - 1, Math.floor(gx + rc)); i++) {
+        const o = g.own[j * g.w + i];
+        if (!o) continue;
+        const d = Math.hypot(i + 0.5 - gx, j + 0.5 - gy) * CELL;
+        if (d > R) continue;
+        const m = o > 0 ? glyphs : blocks, key = Math.abs(o);
+        if (!m.has(key) || d < m.get(key)) m.set(key, d);
+      }
+    }
+    const near = [...glyphs].sort((a, b) => a[1] - b[1]).slice(0, MAX_BLAST_GLYPHS);
+    for (const [gid, d] of near) {
+      const t = g.glyphs, q = (gid - 1) * 4;
+      const dx = ((t[q] + t[q + 2] + 1) / 2) * CELL - x, dy = ((t[q + 1] + t[q + 3] + 1) / 2) * CELL - y, dl = Math.hypot(dx, dy) || 1;
+      const f = 1 - d / R, s = power * (0.35 + 0.65 * f);
+      this.detachGlyph(gid, (dx / dl) * s, (dy / dl) * s - 120 * f, owner, s > 420);
+    }
+    for (const [bid, d] of blocks) this.damageBlock(bid, 20 + 90 * (1 - d / R), x, y, 0, 0, owner, power * 0.7);
+  }
+
+  // Cells of the page come loose together as one rigid piece.
+  breakOff(idx, vx, vy, av, owner, harm) {
+    const g = this.grid, cols = idx.map((i) => g.col[i]), shape = pageShape(idx, g.w);
+    this.op(['x', ...idx]);
+    const c = this.addPiece(cols, shape, (shape.ox + 0.5) * CELL, (shape.oy + 0.5) * CELL, { owner, vx, vy, av, harm, idx });
+    this.ev.push(['piece', c.id, idx, cols]);
+    return c;
+  }
+
+  addPiece(cols, shape, x, y, o = {}) {
+    let count = 0, oldest = null;
+    for (const e of this.ents.values()) {
+      if (e.k !== 'c') continue;
+      count++;
+      if (!e.holder && (!oldest || e.age > oldest.age)) oldest = e;
+    }
+    if (count >= MAX_PIECES && oldest) this.settle(oldest);
+    return this.addEnt({
+      k: 'c', cols, n: cols.length, shape, rad: shape.rad, x, y, px: x, py: y, pr: 0, vx: o.vx ?? 0, vy: o.vy ?? 0, rot: 0, av: o.av ?? 0,
+      holder: 0, owner: o.owner ?? 0, immune: 0, age: 0, rest: 0, thrown: false, harm: !!o.harm, hits: null,
+      page: !!o.idx, idx: o.idx ?? null,
+    });
+  }
+
+  // Loose pieces are rigid bodies: they tumble, bounce off the page, hurt people when thrown (or blasted),
+  // and once they lie still they settle back into the page as rubble in their own shape.
+  stepPiece(c, dt) {
     if (c.holder) {
       const p = this.players.get(c.holder);
       if (p && p.alive && p.hold === c.id) { this.holdPos(c, p); return; }
@@ -399,98 +525,143 @@ export class Game {
     }
     c.age += dt; c.immune -= dt;
     c.vy = Math.min(1200, c.vy + DEBRIS.gravity * dt);
-    c.rot += c.av * dt;
     const speed = Math.hypot(c.vx, c.vy);
-    const steps = Math.max(1, Math.ceil((speed * dt) / CELL));
+    const steps = Math.max(1, Math.ceil(Math.max(speed * dt, Math.abs(c.av) * dt * c.rad) / CELL));
+    const hurts = c.thrown || (c.harm && speed > 300);
     for (let k = 0; k < steps; k++) {
-      const nx = c.x + (c.vx * dt) / steps, ny = c.y + (c.vy * dt) / steps;
-      if (speed >= DEBRIS.hurtSpeed) {
-        const hit = this.chunkHitsPlayer(c, nx, ny);
+      const nx = c.x + (c.vx * dt) / steps, ny = c.y + (c.vy * dt) / steps, nr = c.rot + (c.av * dt) / steps;
+      if (hurts && speed >= DEBRIS.hurtSpeed) {
+        const hit = this.pieceHitsPlayer(c, nx, ny, nr);
         if (hit) {
-          const dmg = throwDamage(c.n, Math.hypot(c.vx - hit.body.vx, c.vy - hit.body.vy));
-          const kick = (c.n * 3 + 150) / (speed || 1);
+          const n = Math.min(c.n, DEBRIS.maxCells);
+          const dmg = throwDamage(n, Math.hypot(c.vx - hit.body.vx, c.vy - hit.body.vy)) * (c.thrown ? 1 : 0.5);
+          const kick = (n * 3 + 150) / (speed || 1);
           this.damage(hit, dmg, c.owner, 'debris', c.vx * kick, c.vy * kick - 80);
           this.ev.push(['crunch', hit.id, r1(nx), r1(ny)]);
-          this.smash(c);
-          return;
+          if (c.thrown) { this.smash(c); return; }
+          (c.hits ??= new Set()).add(hit.id);
+          c.vx *= 0.5; c.vy *= 0.5;
         }
       }
-      if (this.circleHits(nx, ny, c.rad * 0.8)) {
-        if (speed > DEBRIS.smash) {
-          this.carve(nx, ny, c.rad * 0.7 + speed * 0.006, 0.55, 220);
-          // near misses still sting
-          const splash = c.rad + 18, dmg = throwDamage(c.n, speed) * 0.4;
-          for (const p of this.players.values()) {
-            if (!p.alive || (p.id === c.owner && c.immune > 0)) continue;
-            const d = Math.hypot(p.body.x - nx, p.body.y - P.h / 2 - ny);
-            if (d < splash) this.damage(p, dmg * (1 - d / splash), c.owner, 'debris', 0, -120);
-          }
-          this.smash(c);
-          return;
-        }
-        this.bounce(c, nx, ny);
+      const at = this.pieceContact(c, nx, ny, nr);
+      if (at) {
+        if (c.thrown && speed > DEBRIS.smash) { this.impact(c, nx, ny, speed); return; }
+        // only the turn is blocked: keep sliding, lose the spin
+        if (nr !== c.rot && !this.pieceContact(c, nx, ny, c.rot)) { c.x = nx; c.y = ny; c.av *= 0.5; continue; }
+        this.collide(c, at);
+        c.thrown = false; // after its first bounce it's just debris again
         break;
       }
-      c.x = nx; c.y = ny;
+      c.x = nx; c.y = ny; c.rot = nr;
     }
     if (c.y > this.H + 100) { this.ents.delete(c.id); this.ev.push(['gone', c.id]); return; }
-    const slow = Math.hypot(c.vx, c.vy) < 70;
-    c.rest = slow && this.circleHits(c.x, c.y + 3, c.rad * 0.8) ? c.rest + dt : 0;
-    if (c.rest > 0.35 || c.age > 10) this.settle(c);
+    // sunk into the page (it changed under the piece): lift it clear
+    if (this.pieceContact(c, c.x, c.y, c.rot)) for (let up = 1; up <= 8; up++) if (!this.pieceContact(c, c.x, c.y - up, c.rot)) { c.y -= up; break; }
+    c.av = Math.max(-30, Math.min(30, c.av));
+    // at rest = touching the page and not really going anywhere, whatever its velocity says
+    const moved = Math.hypot(c.x - c.px, c.y - c.py) + Math.abs(c.rot - c.pr) * c.rad;
+    c.px = c.x; c.py = c.y; c.pr = c.rot;
+    const still = moved < 0.6 || (Math.hypot(c.vx, c.vy) < 60 && Math.abs(c.av) < 2.5);
+    c.rest = still && this.pieceContact(c, c.x, c.y + 2, c.rot) ? c.rest + dt : 0;
+    if (c.rest > (c.page ? 1.2 : 0.35) || c.age > 12) this.settle(c);
   }
 
-  chunkHitsPlayer(c, x, y) {
+  // Where (if anywhere) the piece's outline at this pose touches the page.
+  pieceContact(c, x, y, rot) {
+    const g = this.grid, s = c.shape, cs = Math.cos(rot), sn = Math.sin(rot);
+    let hx = 0, hy = 0, n = 0;
+    for (const k of s.edge) {
+      const dx = s.off[2 * k], dy = s.off[2 * k + 1];
+      const wx = x + (dx * cs - dy * sn) * CELL, wy = y + (dx * sn + dy * cs) * CELL;
+      if (g.atPx(wx, wy) !== EMPTY) { hx += wx; hy += wy; n++; }
+    }
+    return n ? { x: hx / n, y: hy / n } : null;
+  }
+
+  pieceHitsPlayer(c, x, y, rot) {
+    const s = c.shape, cs = Math.cos(rot), sn = Math.sin(rot);
     for (const p of this.players.values()) {
-      if (!p.alive || p.id === c.holder || (p.id === c.owner && c.immune > 0)) continue;
+      if (!p.alive || p.id === c.holder || (p.id === c.owner && c.immune > 0) || c.hits?.has(p.id)) continue;
       const b = p.body;
-      const qx = Math.min(b.x + P.w / 2, Math.max(b.x - P.w / 2, x)), qy = Math.min(b.y, Math.max(b.y - P.h, y));
-      if ((x - qx) ** 2 + (y - qy) ** 2 < c.rad * c.rad) return p;
+      if (Math.abs(b.x - x) > c.rad + P.w || Math.abs(b.y - P.h / 2 - y) > c.rad + P.h) continue;
+      for (const k of s.edge) {
+        const dx = s.off[2 * k], dy = s.off[2 * k + 1];
+        const wx = x + (dx * cs - dy * sn) * CELL, wy = y + (dx * sn + dy * cs) * CELL;
+        if (wx > b.x - P.w / 2 - 1 && wx < b.x + P.w / 2 + 1 && wy > b.y - P.h - 1 && wy < b.y + 1) return p;
+      }
     }
     return null;
   }
 
-  bounce(c, x, y) {
-    const g = this.grid, rc = c.rad / CELL + 1, gx = x / CELL, gy = y / CELL;
+  // Rigid-body bounce off the page at a contact point: restitution, friction and spin.
+  collide(c, at) {
+    const g = this.grid, gx = at.x / CELL, gy = at.y / CELL;
     let nx = 0, ny = 0;
-    for (let j = Math.floor(gy - rc); j <= Math.floor(gy + rc); j++) {
-      for (let i = Math.floor(gx - rc); i <= Math.floor(gx + rc); i++) {
+    for (let j = Math.floor(gy) - 3; j <= Math.floor(gy) + 3; j++) {
+      for (let i = Math.floor(gx) - 3; i <= Math.floor(gx) + 3; i++) {
         if (g.at(i, j) === EMPTY) continue;
-        const dx = gx - (i + 0.5), dy = gy - (j + 0.5);
-        if (dx * dx + dy * dy <= rc * rc) { nx += dx; ny += dy; }
+        nx += gx - (i + 0.5); ny += gy - (j + 0.5);
       }
     }
     const n = Math.hypot(nx, ny);
     if (n) { nx /= n; ny /= n; } else { nx = 0; ny = -1; }
-    const dot = c.vx * nx + c.vy * ny;
-    if (dot < 0) { c.vx -= 1.35 * dot * nx; c.vy -= 1.35 * dot * ny; }
-    c.vx *= 0.8; c.vy *= 0.9;
-    c.av = c.av * 0.6 + (c.vx / (c.rad || 1)) * 0.5;
+    const rx = at.x - c.x, ry = at.y - c.y, m = c.n, I = c.shape.inertia;
+    const vpx = c.vx - c.av * ry, vpy = c.vy + c.av * rx; // how the contact point is moving
+    const vn = vpx * nx + vpy * ny;
+    if (vn < 0) {
+      const rn = rx * ny - ry * nx;
+      const j = (-1.25 * vn) / (1 / m + (rn * rn) / I);
+      c.vx += (j * nx) / m; c.vy += (j * ny) / m; c.av += (rn * j) / I;
+      const tx = -ny, ty = nx, vt = vpx * tx + vpy * ty, rt = rx * ty - ry * tx;
+      const jt = Math.max(-0.6 * j, Math.min(0.6 * j, -vt / (1 / m + (rt * rt) / I)));
+      c.vx += (jt * tx) / m; c.vy += (jt * ty) / m; c.av += (rt * jt) / I;
+    }
+    c.av *= 0.92;
   }
 
-  // A chunk that comes to rest turns back into rubble you can scoop again.
+  // A thrown piece slamming into the page: crater, nearby letters fly, and it bursts into sand.
+  impact(c, x, y, speed) {
+    const r = Math.min(c.rad, 14) * 0.7 + speed * 0.006;
+    this.carve(x, y, r, 0.55, 220);
+    this.blast(x, y, r * 1.8, c.owner, 320);
+    const splash = Math.min(c.rad, 14) + 18, dmg = throwDamage(Math.min(c.n, DEBRIS.maxCells), speed) * 0.4;
+    for (const p of this.players.values()) {
+      if (!p.alive || (p.id === c.owner && c.immune > 0)) continue;
+      const d = Math.hypot(p.body.x - x, p.body.y - P.h / 2 - y);
+      if (d < splash) this.damage(p, dmg * (1 - d / splash), c.owner, 'debris', 0, -120);
+    }
+    this.smash(c);
+  }
+
+  // A piece at rest goes back into the page as rubble, keeping its shape (and angle).
   settle(c) {
-    // snap to a quarter turn so no two pixels land on the same cell
-    const q = Math.round(c.rot / (Math.PI / 2)) * (Math.PI / 2);
-    const g = this.grid, cells = discCells(c.n), cs = Math.round(Math.cos(q)), sn = Math.round(Math.sin(q)), bake = [], taken = new Set();
-    for (let k = 0; k < cells.length; k++) {
-      const [dx, dy] = cells[k];
-      const i = Math.floor((c.x + (dx * cs - dy * sn) * CELL) / CELL);
-      let j = Math.floor((c.y + (dx * sn + dy * cs) * CELL) / CELL);
-      // pixels that ended up in the ground stack on top of the rest of the chunk instead
-      for (let up = 0; up < 28; up++, j--) {
-        if (i < 0 || i >= g.w || j < 0 || j >= g.h) break;
+    const g = this.grid, s = c.shape;
+    let rot = c.rot;
+    const q = Math.round(rot / (Math.PI / 2)) * (Math.PI / 2);
+    if (Math.abs(rot - q) < 0.12) rot = q; // nearly square: lay it down square
+    const cs = Math.cos(rot), sn = Math.sin(rot), bake = [];
+    const R = Math.ceil(c.rad / CELL) + 1, gx = Math.floor(c.x / CELL), gy = Math.floor(c.y / CELL);
+    for (let j = Math.max(0, gy - R); j <= Math.min(g.h - 1, gy + R); j++) {
+      for (let i = Math.max(0, gx - R); i <= Math.min(g.w - 1, gx + R); i++) {
         const idx = j * g.w + i;
-        if (g.mat[idx] === EMPTY && !taken.has(idx) && !this.cellInPlayer(i, j)) { taken.add(idx); bake.push(idx, c.cols[k]); break; }
+        if (g.mat[idx] !== EMPTY) continue;
+        const wx = ((i + 0.5) * CELL - c.x) / CELL, wy = ((j + 0.5) * CELL - c.y) / CELL;
+        // which of the piece's own cells lands here, at this angle
+        const k = s.at.get(s.key(Math.round(wx * cs + wy * sn + s.ox), Math.round(-wx * sn + wy * cs + s.oy)));
+        if (k === undefined || this.cellInPlayer(i, j)) continue;
+        bake.push(idx, c.cols[k]);
       }
     }
     if (bake.length) this.op(['b', ...bake]);
     this.ents.delete(c.id);
-    this.ev.push(['gone', c.id]);
+    const p = c.holder && this.players.get(c.holder);
+    if (p) p.hold = 0;
+    this.ev.push(['settle', c.id, r1(c.x), r1(c.y), r3(rot)]);
   }
 
   smash(c) {
     const seed = this.seq++;
-    for (const pt of smashParticles(c.x, c.y, c.vx, c.vy, c.rot, c.cols, seed)) this.addPart(pt);
+    for (const pt of smashParticles(c.x, c.y, c.vx, c.vy, c.rot, c.shape.off, c.cols, seed)) this.addPart(pt);
     this.ents.delete(c.id);
     const p = c.holder && this.players.get(c.holder);
     if (p) p.hold = 0;
@@ -640,8 +811,8 @@ export class Game {
     return [...this.players.values()].map((p) => [p.id, p.name, p.color, p.bot ? 1 : 0]);
   }
 
-  chunkList() {
-    return [...this.ents.values()].filter((e) => e.k === 'c').map((c) => [c.id, c.cols]);
+  chunkList() { // loose pieces a joiner needs to draw: rocks by colour, page pieces by their cells
+    return [...this.ents.values()].filter((e) => e.k === 'c').map((c) => (c.page ? [c.id, c.cols, c.idx] : [c.id, c.cols]));
   }
 
   welcome(id) {

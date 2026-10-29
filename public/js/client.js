@@ -2,8 +2,8 @@
 // arrives from the match (server or solo) and is replayed: terrain ops exactly, other players smoothed.
 import { CELL, TICK, PLAYER as P, WEAPONS, GRENADE, DEBRIS, COLORS, INTERP_DELAY, FL_FLY, FL_FLIP, FL_CHARGE } from '/shared/const.js';
 import { newBody, stepBody } from '/shared/physics.js';
-import { applyOp, stepParticle, throwVelocity, smashParticles } from '/shared/debris.js';
-import { css, luma, rgb, red, green, blue } from '/shared/grid.js';
+import { applyOp, stepParticle, throwVelocity, smashParticles, pageShape } from '/shared/debris.js';
+import { css, luma, rgb } from '/shared/grid.js';
 import { unpackGrid } from './codec.js';
 import { Sfx } from './audio.js';
 import { chunkSprite, drawChunk, drawStick, drawTag, drawRocket, drawGrenade } from './render.js';
@@ -12,6 +12,16 @@ const r1 = (v) => Math.round(v * 10) / 10, r3 = (v) => Math.round(v * 1000) / 10
 const MAX_GHOSTS = 4000;
 const VERB = { pistol: 'shot', smg: 'shredded', shotgun: 'blasted', rocket: 'rocketed', rail: 'railed', grenade: 'fragged', debris: 'flattened', fall: 'knocked off' };
 const WEAPON_KEYS = { Digit1: 0, Digit2: 1, Digit3: 2, Digit4: 3, Digit5: 4 };
+
+function loadImage(src) {
+  if (!src) return Promise.resolve(null);
+  return new Promise((resolve) => {
+    const im = new Image();
+    im.onload = () => resolve(im);
+    im.onerror = () => resolve(null);
+    im.src = src;
+  });
+}
 
 export class ClientGame {
   constructor(canvas, net, ui) {
@@ -53,23 +63,18 @@ export class ClientGame {
 
   async setup(m) {
     const grid = m.grid ?? await unpackGrid(m.map);
+    const init = m.init ? await unpackGrid(m.init) : null;
+    const look = m.terrain ?? await loadImage(m.img); // the page as it really looks, full resolution
+    const scenery = m.scenery ?? await loadImage(m.bg);
     if (this.destroyed) return; // left while the map was unpacking
     this.grid = grid; this.W = grid.w * CELL; this.H = grid.h * CELL;
     this.bgCss = css(grid.pageBg);
     this.dark = luma(grid.pageBg) < 0.45;
     this.ink = this.dark ? '#f2f2f2' : '#141414';
     this.paper = this.dark ? '#141414' : '#ffffff';
-    // backdrop (scenery) is washed out toward the page colour so it never looks like something to stand on
-    const fade = new Uint32Array(grid.back.length), pr = red(grid.pageBg), pg = green(grid.pageBg), pb = blue(grid.pageBg);
-    for (let i = 0; i < fade.length; i++) {
-      const c = grid.back[i];
-      if (c) fade[i] = rgb((red(c) + pr) >> 1, (green(c) + pg) >> 1, (blue(c) + pb) >> 1);
-    }
-    this.fadeBack = fade;
-    const cv = document.createElement('canvas');
-    cv.width = grid.w; cv.height = grid.h;
-    const tctx = cv.getContext('2d'), img = tctx.createImageData(grid.w, grid.h);
-    this.terrain = { cv, ctx: tctx, img, px: new Uint32Array(img.data.buffer), d: [0, 0, grid.w - 1, grid.h - 1] };
+    this.look = look;
+    this.buildPage(grid, init, look);
+    this.buildScenery(grid, scenery);
 
     this.me.id = m.id;
     this.code = m.code ?? this.code;
@@ -79,7 +84,7 @@ export class ClientGame {
     this.players.clear();
     for (const [id, name, color, bot] of m.players) this.addPlayer(id, name, color, bot);
     this.ents.clear(); this.sprites.clear();
-    for (const [id, cols] of m.chunks) this.sprites.set(id, chunkSprite(cols));
+    for (const [id, cols, idx] of m.chunks) this.sprites.set(id, idx ? this.pieceSprite(idx, cols) : chunkSprite(cols));
     this.ghosts.length = 0; this.tracers.length = 0; this.fx.length = 0; this.floaters.length = 0;
     Object.assign(this.me, { body: null, alive: false, charge: 0, charging: false, thrownId: 0 });
     this.round = [0, -1];
@@ -110,7 +115,7 @@ export class ClientGame {
     this.offset = this.offset === null || Math.abs(off - this.offset) > 1 ? off : this.offset + (off - this.offset) * 0.05;
     for (const op of m.ops ?? []) {
       applyOp(this.grid, op, (p) => this.addGhost(p));
-      this.markOp(op);
+      this.paintOp(op);
     }
     for (const e of m.ev ?? []) this.event(e);
     for (const s of m.ps) {
@@ -195,6 +200,25 @@ export class ClientGame {
         if (e[1] === me.id && me.body) { me.body.vx += e[2]; me.body.vy += e[3]; me.body.ground = false; }
         break;
       case 'chunk': this.sprites.set(e[1], chunkSprite(e[2])); break;
+      case 'piece': { // a letter or a shard of a box came loose: it keeps its real pixels
+        const [, id, idx, cols] = e, g = this.grid, ctx = this.pageCtx;
+        this.sprites.set(id, this.pieceSprite(idx, cols));
+        for (const i of idx) { // its soft edges sat in the empty cells around it; wipe those too
+          const x = i % g.w, y = (i / g.w) | 0;
+          for (let dy = -1; dy <= 1; dy++) for (let dx = -1; dx <= 1; dx++) {
+            const nx = x + dx, ny = y + dy;
+            if (nx >= 0 && ny >= 0 && nx < g.w && ny < g.h && !g.mat[ny * g.w + nx]) ctx.clearRect(nx * CELL, ny * CELL, CELL, CELL);
+          }
+        }
+        break;
+      }
+      case 'settle': { // lying still: it's rubble now (the cells came as ops), drawn crisp where it lies
+        const [, id, x, y, rot] = e, sp = this.sprites.get(id);
+        if (sp?.smooth) { this.pageCtx.imageSmoothingEnabled = true; drawChunk(this.pageCtx, sp, x, y, rot); }
+        this.sprites.delete(id); this.ents.delete(id);
+        break;
+      }
+      case 'crack': this.sound('crunch', { x: e[1], y: e[2] }, 0.6); this.sparks(e[1], e[2], this.ink, 8); break;
       case 'grab': this.sound('grab', this.posOf(e[1])); break;
       case 'throw': if (e[1] !== me.id) this.sound('throw', this.posOf(e[1])); break;
       case 'smash': {
@@ -228,36 +252,95 @@ export class ClientGame {
     return rgb(n >> 16, (n >> 8) & 255, n & 255);
   }
 
-  markOp(op) {
-    const g = this.grid;
-    if (op[0] === 'c') {
-      const [, x, y, r] = op;
-      this.dirty(Math.floor((x - r) / CELL) - 1, Math.floor((y - r) / CELL) - 1, Math.ceil((x + r) / CELL) + 1, Math.ceil((y + r) / CELL) + 1);
-      return;
+  // The page as it looks right now: the real picture of it, minus what's been destroyed, plus rubble.
+  buildPage(g, init, look) {
+    const cv = document.createElement('canvas');
+    cv.width = this.W; cv.height = this.H;
+    const ctx = cv.getContext('2d', { willReadFrequently: false });
+    const img = ctx.createImageData(this.W, this.H), px = new Uint32Array(img.data.buffer), W = this.W;
+    const cell = (i, c) => {
+      const x0 = (i % g.w) * CELL, y0 = ((i / g.w) | 0) * CELL;
+      for (let y = y0; y < y0 + CELL; y++) for (let x = x0; x < x0 + CELL; x++) px[y * W + x] = c;
+    };
+    if (look) {
+      const tmp = document.createElement('canvas');
+      tmp.width = this.W; tmp.height = this.H;
+      const t = tmp.getContext('2d', { willReadFrequently: true });
+      t.drawImage(look, 0, 0);
+      px.set(new Uint32Array(t.getImageData(0, 0, this.W, this.H).data.buffer));
+      // joining late: redraw every cell that has changed since the page was cut up
+      if (init) for (let i = 0; i < g.mat.length; i++) if (g.mat[i] !== init.mat[i] || g.col[i] !== init.col[i]) cell(i, g.mat[i] ? g.col[i] : 0);
+    } else {
+      for (let i = 0; i < g.mat.length; i++) if (g.mat[i]) cell(i, g.col[i]); // no picture of the page: draw the cells
     }
-    const start = op[0] === 'f' ? 2 : 1, step = op[0] === 'b' ? 2 : 1;
-    for (let k = start; k < op.length; k += step) {
-      const i = op[k], cx = i % g.w, cy = (i / g.w) | 0;
-      this.dirty(cx, cy, cx, cy);
+    ctx.putImageData(img, 0, 0);
+    this.page = cv; this.pageCtx = ctx;
+  }
+
+  // Big backgrounds are scenery: washed out so they never look like something to stand on.
+  buildScenery(g, scenery) {
+    const cv = document.createElement('canvas'), ctx = cv.getContext('2d');
+    if (scenery) {
+      cv.width = this.W; cv.height = this.H;
+      ctx.globalAlpha = 0.5;
+      ctx.drawImage(scenery, 0, 0);
+    } else {
+      cv.width = g.w; cv.height = g.h;
+      const img = ctx.createImageData(g.w, g.h), px = new Uint32Array(img.data.buffer);
+      for (let i = 0; i < g.back.length; i++) if (g.back[i]) px[i] = (g.back[i] & 0x00ffffff) | 0x80000000;
+      ctx.putImageData(img, 0, 0);
+    }
+    this.scenery = cv;
+  }
+
+  // Keep the picture in step with each change to the cells.
+  paintOp(op) {
+    const ctx = this.pageCtx, g = this.grid;
+    const at = (i) => [(i % g.w) * CELL, ((i / g.w) | 0) * CELL];
+    switch (op[0]) {
+      case 'c':
+        ctx.save();
+        ctx.globalCompositeOperation = 'destination-out';
+        ctx.beginPath(); ctx.arc(op[1], op[2], op[3] + 0.8, 0, Math.PI * 2); ctx.fill();
+        ctx.restore();
+        break;
+      case 'x': case 'f':
+        for (let k = op[0] === 'f' ? 2 : 1; k < op.length; k++) { const [x, y] = at(op[k]); ctx.clearRect(x, y, CELL, CELL); }
+        break;
+      case 'b':
+        for (let k = 1; k < op.length; k += 2) { const [x, y] = at(op[k]); ctx.fillStyle = this.cssOf(op[k + 1]); ctx.fillRect(x, y, CELL, CELL); }
+        break;
     }
   }
 
-  dirty(x0, y0, x1, y1) {
-    const d = this.terrain.d;
-    if (!d) { this.terrain.d = [x0, y0, x1, y1]; return; }
-    d[0] = Math.min(d[0], x0); d[1] = Math.min(d[1], y0); d[2] = Math.max(d[2], x1); d[3] = Math.max(d[3], y1);
-  }
-
-  flushTerrain() {
-    const t = this.terrain, d = t.d, g = this.grid;
-    if (!d) return;
-    t.d = null;
-    const x0 = Math.max(0, d[0]), y0 = Math.max(0, d[1]), x1 = Math.min(g.w - 1, d[2]), y1 = Math.min(g.h - 1, d[3]);
-    if (x1 < x0 || y1 < y0) return;
-    for (let y = y0; y <= y1; y++) {
-      for (let x = x0, i = y * g.w + x0; x <= x1; x++, i++) t.px[i] = g.mat[i] ? g.col[i] : this.fadeBack[i];
+  // A loose letter / shard drawn from the page's own pixels (or its cell colours if there's no picture).
+  pieceSprite(idx, cols) {
+    const g = this.grid, shape = pageShape(idx, g.w), member = new Set(idx);
+    let x0 = Infinity, y0 = Infinity, x1 = -1, y1 = -1;
+    for (const i of idx) { const x = i % g.w, y = (i / g.w) | 0; x0 = Math.min(x0, x); y0 = Math.min(y0, y); x1 = Math.max(x1, x); y1 = Math.max(y1, y); }
+    const w = (x1 - x0 + 1) * CELL, h = (y1 - y0 + 1) * CELL, cv = document.createElement('canvas');
+    cv.width = w; cv.height = h;
+    const c = cv.getContext('2d');
+    if (this.look) {
+      c.drawImage(this.look, x0 * CELL, y0 * CELL, w, h, 0, 0, w, h);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (!member.has(y * g.w + x)) c.clearRect((x - x0) * CELL, (y - y0) * CELL, CELL, CELL);
+    } else {
+      idx.forEach((i, k) => { c.fillStyle = this.cssOf(cols[k]); c.fillRect(((i % g.w) - x0) * CELL, (((i / g.w) | 0) - y0) * CELL, CELL, CELL); });
     }
-    t.ctx.putImageData(t.img, 0, 0, x0, y0, x1 - x0 + 1, y1 - y0 + 1);
+    const dx = (x0 - shape.ox - 0.5) * CELL, dy = (y0 - shape.oy - 0.5) * CELL;
+    const sp = { cv, dx, dy, dw: w, dh: h, n: idx.length, rad: shape.rad, cols, off: shape.off, smooth: true };
+    if (idx.length <= 40) return sp; // letters stay as they are
+    // shards of a box get a thin rim, so a white piece still reads against a white page
+    const rim = document.createElement('canvas');
+    rim.width = w + 2; rim.height = h + 2;
+    const r = rim.getContext('2d');
+    for (const [ox, oy] of [[0, 1], [2, 1], [1, 0], [1, 2]]) r.drawImage(cv, ox, oy);
+    r.globalCompositeOperation = 'source-in';
+    r.fillStyle = this.dark ? 'rgba(255,255,255,0.45)' : 'rgba(0,0,0,0.35)';
+    r.fillRect(0, 0, w + 2, h + 2);
+    r.globalCompositeOperation = 'source-over';
+    r.drawImage(cv, 1, 1);
+    return { ...sp, cv: rim, dx: dx - 1, dy: dy - 1, dw: w + 2, dh: h + 2 };
   }
 
   addGhost(p) {
@@ -564,9 +647,11 @@ export class ClientGame {
     ctx.setTransform(z, 0, 0, z, (-this.cam.x + sx) * z, (-this.cam.y + sy) * z);
     ctx.imageSmoothingEnabled = false;
 
-    // the page itself
-    this.flushTerrain();
-    ctx.drawImage(this.terrain.cv, 0, 0, this.W, this.H);
+    // the page itself: washed-out scenery, then everything you can stand on and break
+    ctx.imageSmoothingEnabled = true;
+    ctx.drawImage(this.scenery, 0, 0, this.W, this.H);
+    ctx.drawImage(this.page, 0, 0);
+    ctx.imageSmoothingEnabled = false;
     ctx.fillStyle = this.dark ? 'rgba(255,255,255,0.06)' : 'rgba(0,0,0,0.05)';
     ctx.fillRect(-2000, 0, 2000, this.H); ctx.fillRect(this.W, 0, 2000, this.H);
     ctx.fillStyle = 'rgba(230,40,40,0.14)';
@@ -763,7 +848,7 @@ export class ClientGame {
     // bottom centre: weapons, grenade, debris
     const slots = [...WEAPONS.map((w, i) => ({ key: String(i + 1), name: w.name, on: me.weapon === i && !this.heldSprite() })),
       { key: 'RMB', name: 'Grenade', cd: Math.max(0, me.nade - this.clock) / GRENADE.cd },
-      { key: 'E', name: this.heldSprite() ? `Rock ×${this.heldSprite().n}` : 'Debris', on: !!this.heldSprite() }];
+      { key: 'E', name: this.heldSprite() ? `${this.heldSprite().smooth ? 'Piece' : 'Rock'} ×${this.heldSprite().n}` : 'Debris', on: !!this.heldSprite() }];
     ctx.font = '700 11px system-ui, sans-serif';
     const sw = 76, total = slots.length * (sw + 6) - 6;
     let x = W / 2 - total / 2;

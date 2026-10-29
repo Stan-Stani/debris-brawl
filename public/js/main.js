@@ -2,7 +2,7 @@
 import { ClientGame } from './client.js';
 import { WsNet, LocalNet } from './net.js';
 import { loadPage, DEMO_MAPS } from './raster.js';
-import { packGrid } from './codec.js';
+import { packGrid, packImage } from './codec.js';
 import { Sfx } from './audio.js';
 import { imagesIn, sendShot } from './upload.js';
 
@@ -83,7 +83,7 @@ async function startSolo() {
   try {
     const page = await loadPage(src, progress);
     if (token !== loadToken) return;
-    net = new LocalNet(page.grid, { name, bots, mapName: page.name });
+    net = new LocalNet(page.grid, { name, bots, mapName: page.name, look: page.look, scenery: page.scenery });
     begin(net);
     net.connect((m) => game?.receive(m));
   } catch (e) {
@@ -107,7 +107,7 @@ function startOnline(room) {
           const page = await loadPage(src, progress);
           if (token !== loadToken) return;
           progress('Sending the page to the room', 0.95);
-          net.send({ t: 'map', data: await packGrid(page.grid), name: page.name });
+          net.send(await mapMessage(page));
         } catch (e) {
           leave(e.message);
         }
@@ -124,6 +124,12 @@ function startOnline(room) {
       case 'closed': leave("Couldn't reach the game server. Is it running? (npm start)"); break;
     }
   });
+}
+
+// the cut-up page plus how it looks, for the server to hand to everyone in the room
+async function mapMessage(page) {
+  const [data, img, bg] = await Promise.all([packGrid(page.grid), packImage(page.look), packImage(page.scenery)]);
+  return { t: 'map', data, img, bg, name: page.name };
 }
 
 function begin(n) {
@@ -163,10 +169,10 @@ async function changeMap(src) {
   try {
     const page = await loadPage(src, progress);
     if (token !== loadToken || g !== game) return;
-    if (net.solo) net.loadMap(page.grid, page.name);
+    if (net.solo) net.loadMap(page.grid, page.name, page.look, page.scenery);
     else {
       progress('Sending the page to the room', 0.95);
-      net.send({ t: 'map', data: await packGrid(page.grid), name: page.name });
+      net.send(await mapMessage(page));
     }
     game.setPaused(false);
     show(null);

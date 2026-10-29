@@ -19,6 +19,10 @@ export function unpackGrid(b64) {
   return Grid.decode(new Uint8Array(raw.buffer, raw.byteOffset, raw.length));
 }
 
+// The host's picture of the page (crisp text and images); only relayed, as an image data URL.
+const IMG_RE = /^data:image\/(webp|png);base64,[A-Za-z0-9+/]+={0,2}$/;
+const imageData = (s) => (typeof s === 'string' && s.length < 6_000_000 && IMG_RE.test(s) ? s : null);
+
 export const cleanText = (s, n) => (typeof s === 'string' ? s : '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, n);
 const pick = (a) => a[crypto.randomInt(a.length)];
 
@@ -50,6 +54,7 @@ class Room {
     this.conns = new Set(); this.host = null; this.game = null;
     this.mapName = ''; this.tickN = 0; this.emptySince = Date.now(); this.created = Date.now();
     this.packed = null; this.packedRev = -1;
+    this.img = null; this.bg = null; this.initPacked = null;
   }
 
   get humans() { return this.conns.size; }
@@ -71,7 +76,7 @@ class Room {
     if (this.game.players.size >= MAX_PLAYERS) this.game.removeBot();
     const p = this.game.addPlayer(conn.name);
     conn.pid = p.id;
-    conn.send({ t: 'welcome', code: this.code, host: this.host?.pid ?? 0, public: this.public, map: this.pack(), mapName: this.mapName, ...this.game.welcome(p.id) });
+    conn.send({ t: 'welcome', code: this.code, host: this.host?.pid ?? 0, public: this.public, ...this.mapMsg(), ...this.game.welcome(p.id) });
     this.autoBots();
   }
 
@@ -79,6 +84,12 @@ class Room {
   pack() {
     if (this.packedRev !== this.game.rev) { this.packed = packGrid(this.game.grid); this.packedRev = this.game.rev; }
     return this.packed;
+  }
+
+  // the page now, the page as it started (so a joiner can redraw what's been wrecked) and its pictures
+  mapMsg() {
+    this.initPacked ??= packGrid(this.game.initial);
+    return { map: this.pack(), init: this.initPacked, img: this.img, bg: this.bg, mapName: this.mapName };
   }
 
   remove(conn) {
@@ -111,6 +122,7 @@ class Room {
     let grid;
     try { grid = unpackGrid(m.data); } catch { conn.send({ t: 'maperror', msg: 'That map could not be read.' }); return; }
     this.mapName = cleanText(m.name, 80);
+    this.img = imageData(m.img); this.bg = imageData(m.bg); this.initPacked = null;
     if (!this.game) {
       this.game = new Game(grid, { timed: true });
       for (const c of this.conns) this.enter(c);
@@ -130,8 +142,8 @@ class Room {
     if (!g) return;
     if (g.needsReload) {
       g.needsReload = false;
-      const map = this.pack();
-      for (const c of this.conns) if (c.pid) c.send({ t: 'reload', map, mapName: this.mapName, host: this.host?.pid ?? 0, ...g.welcome(c.pid) });
+      const map = this.mapMsg();
+      for (const c of this.conns) if (c.pid) c.send({ t: 'reload', ...map, host: this.host?.pid ?? 0, ...g.welcome(c.pid) });
     }
     const msg = JSON.stringify(g.flush());
     for (const c of this.conns) if (c.pid) c.sendRaw(msg);

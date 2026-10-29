@@ -44,9 +44,15 @@ Use `HOST=127.0.0.1 npm start` to keep it local, `PORT=…` to change the port.
 - **Identical pages everywhere** (`shared/debris.js`): every terrain change goes out as a small op
   (carve a circle with this seed, bake these cells into rubble…). The server applies its own ops through
   the same function clients use, so every copy of the page matches cell for cell.
-- **Debris**: explosions throw off particles that land and settle as rubble. E scoops up to 110 cells
-  into a chunk carried overhead; thrown chunks damage on contact (`8 + 0.42 × cells`, scaled by speed),
-  burst into rubble again, and crater the page if they hit it hard. Slow chunks settle back into rubble.
+- **The page stays itself**: it's drawn from a full-resolution picture of the real page, so text stays
+  crisp. A bullet knocks a whole letter loose; boxes (backgrounds, borders, pictures) take damage and,
+  once worn down, crack into a few rigid shards that keep their pixels and whatever text was on them.
+  Loose letters and shards tumble, bounce, and when they lie still they settle back into the page as
+  rubble in their own shape.
+- **Debris**: the middle of an explosion turns to sand: particles land and settle as rubble. E picks up
+  a loose letter or shard in reach (or catches one mid-air), otherwise scoops up to 110 cells of rubble
+  into a rock carried overhead. Thrown pieces damage on contact (`8 + 0.42 × cells`, scaled by speed),
+  crater the page if they hit it hard, and burst back into rubble.
 
 ## Fetching other sites safely
 

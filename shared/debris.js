@@ -25,22 +25,22 @@ function fallParticle(g, i, c, seed) {
 }
 
 // ops: ['c', x, y, r, seed, frac, power] carve with debris
-//      ['x', i...] quiet clear (scooped up)    ['f', seed, i...] rubble that lost its support falls
+//      ['x', i...] quiet clear (scooped up, or a letter / shard breaking loose)    ['f', seed, i...] rubble that lost its support falls
 //      ['b', i, col, ...] particles settling into rubble
-// spawn(particle) gets the debris an op throws off; cleared(i) hears about carved and scooped cells.
+// spawn(particle) gets the debris an op throws off; cleared(i, own) hears about carved and scooped cells.
 export function applyOp(g, op, spawn, cleared) {
   switch (op[0]) {
     case 'c': {
       const [, x, y, r, seed, frac, power] = op;
-      g.carve(x, y, r, (i, m, c) => {
+      g.carve(x, y, r, (i, m, c, o) => {
         const p = spawn && carveParticle(g, i, m, c, x, y, seed, frac, power);
         if (p) spawn(p);
-        if (cleared) cleared(i);
+        if (cleared) cleared(i, o);
       });
       break;
     }
     case 'x':
-      for (let k = 1; k < op.length; k++) { g.clear(op[k]); if (cleared) cleared(op[k]); }
+      for (let k = 1; k < op.length; k++) { const o = g.own[op[k]]; g.clear(op[k]); if (cleared) cleared(op[k], o); }
       break;
     case 'f': {
       const seed = op[1];
@@ -100,7 +100,35 @@ export function discCells(n) {
   return discTable.slice(0, n);
 }
 
-export const chunkRadius = (n) => Math.sqrt(n / Math.PI) * CELL + 1;
+// A rigid piece of page: its cells as integer coords centred on their average. Server and clients build
+// it the same way from the same cells, so offsets match. `at` finds a cell by coords (for settling).
+export function pieceShape(ix, iy) {
+  const n = ix.length, key = (x, y) => (x + 32768) * 65536 + (y + 32768);
+  let sx = 0, sy = 0;
+  for (let k = 0; k < n; k++) { sx += ix[k]; sy += iy[k]; }
+  const ox = sx / n, oy = sy / n, off = new Float32Array(2 * n), at = new Map(), edge = [];
+  for (let k = 0; k < n; k++) at.set(key(ix[k], iy[k]), k);
+  let r2 = 0, inertia = 0;
+  for (let k = 0; k < n; k++) {
+    const dx = ix[k] - ox, dy = iy[k] - oy, d2 = dx * dx + dy * dy;
+    off[2 * k] = dx; off[2 * k + 1] = dy;
+    r2 = Math.max(r2, d2);
+    inertia += d2 + 1 / 6;
+    if (!at.has(key(ix[k] + 1, iy[k])) || !at.has(key(ix[k] - 1, iy[k])) || !at.has(key(ix[k], iy[k] + 1)) || !at.has(key(ix[k], iy[k] - 1))) edge.push(k);
+  }
+  return { n, ix, iy, ox, oy, off, edge, at, key, rad: (Math.sqrt(r2) + 0.75) * CELL, inertia: inertia * CELL * CELL };
+}
+
+// cells of the page itself (a letter, a shard of a box)
+export function pageShape(idx, w) {
+  return pieceShape(idx.map((i) => i % w), idx.map((i) => (i / w) | 0));
+}
+
+// a scooped-up rock
+export function rockShape(n) {
+  const cells = discCells(n);
+  return pieceShape(cells.map((c) => c[0]), cells.map((c) => c[1]));
+}
 
 // Heavier chunks fly slower; full charge throws hard.
 export function throwVelocity(a, power, n, bvx = 0, bvy = 0) {
@@ -114,11 +142,11 @@ export function throwDamage(n, speed) {
   return Math.round((DEBRIS.dmgBase + n * DEBRIS.dmgPerCell) * Math.min(1.5, Math.max(0.5, speed / 700)));
 }
 
-// Pieces of a burst chunk (same seed on server and clients).
-export function smashParticles(x, y, vx, vy, rot, cols, seed) {
-  const cells = discCells(cols.length), cs = Math.cos(rot), sn = Math.sin(rot), out = [];
-  for (let k = 0; k < cells.length; k++) {
-    const [dx, dy] = cells[k];
+// Pieces of a burst chunk (same seed on server and clients). off: the piece's cell offsets.
+export function smashParticles(x, y, vx, vy, rot, off, cols, seed) {
+  const cs = Math.cos(rot), sn = Math.sin(rot), out = [];
+  for (let k = 0; k < cols.length; k++) {
+    const dx = off[2 * k], dy = off[2 * k + 1];
     out.push({
       x: x + (dx * cs - dy * sn) * CELL, y: y + (dx * sn + dy * cs) * CELL,
       vx: vx * 0.25 + (hash(k, seed) - 0.5) * 320 + dx * 18,

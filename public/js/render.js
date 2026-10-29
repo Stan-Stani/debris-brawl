@@ -1,10 +1,10 @@
 // Drawing helpers, all in world coordinates (CSS px of the page).
 import { CELL, WEAPONS, FL_FLY, FL_PROT } from '/shared/const.js';
-import { discCells, chunkRadius } from '/shared/debris.js';
+import { rockShape } from '/shared/debris.js';
 
 // A chunk's pixels are baked into a tiny canvas once and drawn rotated after that.
 export function chunkSprite(cols) {
-  const cells = discCells(cols.length);
+  const shape = rockShape(cols.length), cells = cols.map((_, k) => [shape.ix[k], shape.iy[k]]);
   let R = 1;
   for (const [dx, dy] of cells) R = Math.max(R, Math.abs(dx), Math.abs(dy));
   R += 1;
@@ -21,14 +21,18 @@ export function chunkSprite(cols) {
     }
   }
   x.putImageData(img, 0, 0);
-  return { cv, R, S, cols, n: cols.length, rad: chunkRadius(cols.length) };
+  // positioned on the rock's centre of mass, the same point the server moves
+  const S2 = S * CELL;
+  return { cv, dx: -(R + 0.5 + shape.ox) * CELL, dy: -(R + 0.5 + shape.oy) * CELL, dw: S2, dh: S2, cols, n: cols.length, rad: shape.rad, off: shape.off, smooth: false };
 }
 
+// Rocks are pixel art (no smoothing); letters and shards are real page pixels (smoothed when turned).
 export function drawChunk(ctx, sp, x, y, rot) {
   ctx.save();
   ctx.translate(x, y);
   ctx.rotate(rot);
-  ctx.drawImage(sp.cv, -(sp.R + 0.5) * CELL, -(sp.R + 0.5) * CELL, sp.S * CELL, sp.S * CELL);
+  ctx.imageSmoothingEnabled = !!sp.smooth;
+  ctx.drawImage(sp.cv, sp.dx, sp.dy, sp.dw, sp.dh);
   ctx.restore();
 }
 

@@ -31,8 +31,8 @@ export async function loadPage(src, progress = () => {}) {
     if (!r.ok) throw new Error(j.error || "Couldn't load that site.");
     html = j.html; base = j.finalUrl; proxied = true;
   }
-  const grid = await rasterize(html, base, proxied, progress);
-  return { grid, name: src.kind === 'map' ? DEMO_MAPS.find((m) => m.id === src.id)?.name ?? src.id : hostOf(base) };
+  const { grid, look, scenery } = await rasterize(html, base, proxied, progress);
+  return { grid, look, scenery, name: src.kind === 'map' ? DEMO_MAPS.find((m) => m.id === src.id)?.name ?? src.id : hostOf(base) };
 }
 
 const hostOf = (u) => { try { return new URL(u).host.replace(/^www\./, ''); } catch { return u; } };
@@ -87,21 +87,22 @@ async function rasterize(html, base, proxied, progress) {
     progress('Painting the boxes', 0.3);
     const blocks = makeCanvas(LAYOUT_W, H), text = makeCanvas(LAYOUT_W, H), back = makeCanvas(LAYOUT_W, H);
     const pageBg = pageBackground(doc, win);
-    const media = paintBoxes(doc, win, blocks, back, pageBg, H);
+    const { media, boxes } = paintBoxes(doc, win, blocks, back, pageBg, H);
 
     progress('Painting the pictures', 0.45);
-    await paintMedia(media, blocks, proxied);
+    await paintMedia(media, blocks, proxied, boxes);
 
     progress('Painting the words', 0.6);
-    await paintText(doc, win, text, H, progress);
+    const letters = await paintText(doc, win, text, H, progress);
 
     progress('Cutting it into pieces', 0.85);
     await tick();
     const grid = toGrid(blocks, text, back, H, pageBg);
+    claim(grid, boxes, letters);
     if (grid.filled() < 1500) {
       throw new Error("That page came out nearly empty. It probably builds itself with JavaScript, which we don't run. Try another address or one of the built-in pages.");
     }
-    return grid;
+    return { grid, look: lookOf(blocks, text, grid), scenery: back.canvas };
   } finally {
     frame.remove();
   }
@@ -115,8 +116,10 @@ function pageBackground(doc, win) {
   return [255, 255, 255, 1];
 }
 
+// Paints every element's background and borders. Returns the pictures still to paint, and the box of
+// every element that put something solid on the page (so it can later crack off as one piece).
 function paintBoxes(doc, win, ctx, bctx, pageBg, H) {
-  const media = [];
+  const media = [], boxes = [];
   for (const el of doc.body.querySelectorAll('*')) {
     const tag = el.localName;
     if (SKIP.has(tag)) continue;
@@ -136,13 +139,15 @@ function paintBoxes(doc, win, ctx, bctx, pageBg, H) {
       c.beginPath();
       if (rad > 1) c.roundRect(r.left, r.top, r.width, r.height, rad); else c.rect(r.left, r.top, r.width, r.height);
       c.fill();
+      if (!scenery) { boxes.push([r.left, r.top, r.right, r.bottom]); paintBorders(ctx, r, cs); continue; }
     }
-    paintBorders(ctx, r, cs);
+    if (paintBorders(ctx, r, cs)) boxes.push([r.left, r.top, r.right, r.bottom]);
   }
-  return media;
+  return { media, boxes };
 }
 
 function paintBorders(ctx, r, cs) {
+  let any = false;
   for (const side of ['Top', 'Right', 'Bottom', 'Left']) {
     const w = parseFloat(cs[`border${side}Width`]);
     if (!(w >= 1)) continue;
@@ -151,11 +156,13 @@ function paintBorders(ctx, r, cs) {
     const col = cs[`border${side}Color`], c = parseColor(col);
     if (!c || c[3] < 0.15) continue;
     ctx.fillStyle = col;
+    any = true;
     if (side === 'Top') ctx.fillRect(r.left, r.top, r.width, w);
     else if (side === 'Bottom') ctx.fillRect(r.left, r.bottom - w, r.width, w);
     else if (side === 'Left') ctx.fillRect(r.left, r.top, w, r.height);
     else ctx.fillRect(r.right - w, r.top, w, r.height);
   }
+  return any;
 }
 
 function loadImg(src) {
@@ -179,7 +186,7 @@ function svgSource(el, r, cs) {
   return URL.createObjectURL(blob);
 }
 
-async function paintMedia(media, ctx, proxied) {
+async function paintMedia(media, ctx, proxied, boxes) {
   const jobs = media.slice(0, 160).map(async ({ el, r, cs, tag }) => {
     let src = null, blob = false;
     if (tag === 'img' || tag === 'input') src = el.currentSrc || el.src;
@@ -192,6 +199,7 @@ async function paintMedia(media, ctx, proxied) {
   });
   for (const { r, cs, img } of await Promise.all(jobs)) {
     if (!(img && drawImageSafe(ctx, img, r, cs))) placeholder(ctx, r);
+    boxes.push([r.left, r.top, r.right, r.bottom]); // a picture breaks off as one piece too
   }
 }
 
@@ -226,8 +234,9 @@ function placeholder(ctx, r) {
   ctx.restore();
 }
 
-// Every visible character, drawn where the browser put it.
+// Every visible character, drawn where the browser put it. Returns each one's box.
 async function paintText(doc, win, ctx, H, progress) {
+  const letters = [];
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   ctx.textBaseline = 'alphabetic';
@@ -264,10 +273,12 @@ async function paintText(doc, win, ctx, H, progress) {
       else if (transform === 'lowercase') out = ch.toLowerCase();
       wordStart = false;
       ctx.fillText(out, rr.left, rr.bottom - descent);
-      if (++count >= MAX_CHARS) return;
+      letters.push([rr.left, rr.top, rr.right, rr.bottom]);
+      if (++count >= MAX_CHARS) return letters;
       if (count % 3000 === 0) { progress('Painting the words', 0.6 + 0.2 * (count / MAX_CHARS)); await tick(); }
     }
   }
+  return letters;
 }
 
 function toGrid(blocks, text, back, H, pageBg) {
@@ -309,4 +320,46 @@ function toGrid(blocks, text, back, H, pageBg) {
     }
   }
   return g;
+}
+
+// Tag each cell with what it belongs to: -n for box n (later boxes are painted on top, so they win),
+// +n for letter n. Only boxes and letters that ended up with cells get a number.
+function claim(g, boxes, letters) {
+  const cells = (l, t, r, b) => [Math.max(0, Math.floor(l / CELL)), Math.max(0, Math.floor(t / CELL)), Math.min(g.w - 1, Math.floor((r - 0.01) / CELL)), Math.min(g.h - 1, Math.floor((b - 0.01) / CELL))];
+  const assign = (rects, mat, sign) => {
+    const table = [];
+    for (const rect of rects) {
+      const [x0, y0, x1, y1] = cells(...rect);
+      if (x1 < x0 || y1 < y0 || (x1 - x0 + 1) * (y1 - y0 + 1) > 200000) continue; // giant wrappers aren't one piece
+      let any = false;
+      for (let y = y0; y <= y1 && !any; y++) for (let x = x0; x <= x1; x++) if (g.mat[y * g.w + x] === mat) { any = true; break; }
+      if (!any) continue;
+      table.push(x0, y0, x1, y1);
+      const id = sign * (table.length / 4);
+      for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) if (g.mat[y * g.w + x] === mat) g.own[y * g.w + x] = id;
+    }
+    return Int32Array.from(table);
+  };
+  g.blocks = assign(boxes, SOLID, -1);
+  g.glyphs = assign(letters, TEXT, 1);
+}
+
+// The page as it looks, at full resolution: boxes and pictures with the words on top. Faint pixels in
+// empty cells that aren't next to anything solid are wiped, so nothing looks solid that isn't.
+function lookOf(blocks, text, g) {
+  const W = blocks.canvas.width, H = blocks.canvas.height, out = makeCanvas(W, H);
+  out.drawImage(blocks.canvas, 0, 0);
+  out.drawImage(text.canvas, 0, 0);
+  const img = out.getImageData(0, 0, W, H), px = new Uint32Array(img.data.buffer);
+  for (let cy = 0; cy < g.h; cy++) {
+    for (let cx = 0; cx < g.w; cx++) {
+      if (g.mat[cy * g.w + cx]) continue;
+      let near = false;
+      for (let y = Math.max(0, cy - 1); y <= Math.min(g.h - 1, cy + 1) && !near; y++) for (let x = Math.max(0, cx - 1); x <= Math.min(g.w - 1, cx + 1); x++) if (g.mat[y * g.w + x]) { near = true; break; }
+      if (near) continue;
+      for (let y = cy * CELL; y < Math.min(H, cy * CELL + CELL); y++) for (let x = cx * CELL; x < cx * CELL + CELL; x++) px[y * W + x] = 0;
+    }
+  }
+  out.putImageData(img, 0, 0);
+  return out.canvas;
 }

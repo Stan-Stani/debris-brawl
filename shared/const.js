@@ -43,7 +43,8 @@ export const ROCKET_LIFE = 3;
 // The new part: scoop up rubble, charge, throw it at people.
 export const DEBRIS = {
   reach: 34,          // px from your chest you can scoop rubble or catch a chunk
-  maxCells: 110,
+  maxCells: 110,      // biggest rock you can scoop out of rubble
+  carryMax: 260,      // biggest loose piece (a letter, a shard of a box) you can lift
   minCells: 6,
   charge: 0.75,       // seconds to a full-power throw
   minSpeed: 380, maxSpeed: 1150,

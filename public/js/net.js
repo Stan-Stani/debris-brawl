@@ -27,8 +27,8 @@ export class WsNet {
 }
 
 export class LocalNet {
-  constructor(grid, { name, bots, mapName }) {
-    this.grid = grid; this.name = name; this.bots = bots; this.mapName = mapName;
+  constructor(grid, { name, bots, mapName, look, scenery }) {
+    this.grid = grid; this.name = name; this.bots = bots; this.mapName = mapName; this.look = look; this.scenery = scenery;
     this.paused = false; this.solo = true;
   }
 
@@ -37,7 +37,7 @@ export class LocalNet {
     const g = this.game = new Game(this.grid.clone(), { timed: false });
     for (let i = 0; i < this.bots; i++) g.addBot();
     this.me = g.addPlayer(this.name).id;
-    handler({ t: 'welcome', code: null, host: this.me, grid: this.grid.clone(), mapName: this.mapName, ...g.welcome(this.me) });
+    handler({ t: 'welcome', code: null, host: this.me, grid: this.grid.clone(), terrain: this.look, scenery: this.scenery, mapName: this.mapName, ...g.welcome(this.me) });
     let last = performance.now(), acc = 0, n = 0;
     this.timer = setInterval(() => {
       const now = performance.now();
@@ -56,7 +56,7 @@ export class LocalNet {
     const g = this.game;
     if (g.needsReload) {
       g.needsReload = false;
-      this.handler({ t: 'reload', grid: g.grid.clone(), mapName: this.mapName, host: this.me, ...g.welcome(this.me) });
+      this.handler({ t: 'reload', grid: g.grid.clone(), terrain: this.look, scenery: this.scenery, mapName: this.mapName, host: this.me, ...g.welcome(this.me) });
     }
     this.handler(g.flush());
   }
@@ -66,8 +66,8 @@ export class LocalNet {
     this.game.handle(this.me, m);
   }
 
-  loadMap(grid, mapName) {
-    this.grid = grid; this.mapName = mapName;
+  loadMap(grid, mapName, look, scenery) {
+    this.grid = grid; this.mapName = mapName; this.look = look; this.scenery = scenery;
     this.game.loadMap(grid.clone());
   }
 

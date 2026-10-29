@@ -106,7 +106,7 @@ export function startServer({ port = 8787, host = '0.0.0.0', uploadDir = path.jo
     return serveStatic(req, res, url.pathname);
   });
 
-  const wss = new WebSocketServer({ noServer: true, maxPayload: 8 << 20 });
+  const wss = new WebSocketServer({ noServer: true, maxPayload: 24 << 20 }); // a map plus two page pictures
   server.on('upgrade', (req, socket, head) => {
     let url;
     try { url = new URL(req.url, 'http://local'); } catch { socket.destroy(); return; }

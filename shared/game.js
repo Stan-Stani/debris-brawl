@@ -6,7 +6,7 @@ import {
   ROUND_TIME, END_TIME, RESPAWN_TIME, SPAWN_PROTECT, MAX_PLAYERS, FL_FLY, FL_FLIP, FL_PROT, FL_CHARGE,
 } from './const.js';
 import { newBody, stepBody, canStand } from './physics.js';
-import { applyOp, stepParticle, rockShape, pageShape, throwVelocity, throwDamage, smashParticles } from './debris.js';
+import { applyOp, stepParticle, rockShape, pageShape, pieceDistance, throwVelocity, throwDamage, smashParticles } from './debris.js';
 import { rng } from './rng.js';
 
 const MAX_PARTS = 2500;
@@ -39,6 +39,11 @@ export class Game {
     this.rev = (this.rev ?? 0) + 1; // bumps on every terrain change
     this.blockDmg = new Float32Array(grid.blockCount + 1);
     this.blockGone = new Uint8Array(grid.blockCount + 1);
+    // which letter's box covers each cell: a shot through a word hits the letter, not just its ink
+    this.letterAt = new Int32Array(grid.w * grid.h);
+    for (let q = 0, id = 1; q < grid.glyphs.length; q += 4, id++) {
+      for (let y = grid.glyphs[q + 1]; y <= grid.glyphs[q + 3]; y++) this.letterAt.fill(id, y * grid.w + grid.glyphs[q], y * grid.w + grid.glyphs[q + 2] + 1);
+    }
     this.round = { state: 'play', t: ROUND_TIME };
     for (const p of this.players.values()) this.resetPlayer(p);
     this.needsReload = true;
@@ -178,7 +183,8 @@ export class Game {
     let near = null, nd = Infinity, heavy = false;
     for (const c of this.ents.values()) {
       if (c.k !== 'c' || c.holder || (c.owner === p.id && c.immune > 0)) continue;
-      const d = Math.hypot(c.x - cx, c.y - cy) - c.rad;
+      if (Math.hypot(c.x - cx, c.y - cy) - c.rad >= R + P.h / 2) continue; // quick reject; the real test is below
+      const d = pieceDistance(c.shape, c.x, c.y, c.rot, cx, p.body.y - P.h, p.body.y); // the piece you're actually next to
       if (d >= R) continue;
       if (c.n > DEBRIS.carryMax) { heavy = true; continue; }
       if (d < nd) { near = c; nd = d; }
@@ -303,8 +309,13 @@ export class Game {
     return null;
   }
 
+  // A piece in the air at this point (pieces lying still don't stop shots: a pile isn't a wall).
   chunkAt(x, y) {
-    for (const c of this.ents.values()) if (c.k === 'c' && !c.holder && (c.x - x) ** 2 + (c.y - y) ** 2 < (c.rad * 0.7) ** 2) return c;
+    for (const c of this.ents.values()) {
+      if (c.k !== 'c' || c.holder || c.sleep || (c.x - x) ** 2 + (c.y - y) ** 2 > c.rad * c.rad) continue;
+      const s = c.shape, cs = Math.cos(c.rot), sn = Math.sin(c.rot), wx = (x - c.x) / CELL, wy = (y - c.y) / CELL;
+      if (s.at.has(s.key(Math.round(wx * cs + wy * sn + s.ox), Math.round(-wx * sn + wy * cs + s.oy)))) return c;
+    }
     return null;
   }
 
@@ -341,7 +352,7 @@ export class Game {
           else this.smash(ch);
           return false;
         }
-        if (g.atPx(b.x, b.y) !== EMPTY) {
+        if (g.atPx(b.x, b.y) !== EMPTY || this.letterHere(b.x, b.y)) {
           b.pierce -= this.hitTerrain(b.x, b.y, W, b.vx / W.speed, b.vy / W.speed, b.owner);
           if (b.pierce <= 0) return false;
         }
@@ -404,11 +415,22 @@ export class Game {
 
   // ---- what the page is made of: letters come off whole, boxes wear down and crack ----
 
+  // The letter (still on the page) whose box this point is in, if any.
+  letterHere(x, y) {
+    if (x < 0 || x >= this.W || y < 0 || y >= this.H) return 0;
+    const gid = this.letterAt[Math.floor(y / CELL) * this.grid.w + Math.floor(x / CELL)];
+    if (!gid) return 0;
+    const g = this.grid, t = g.glyphs, q = (gid - 1) * 4;
+    for (let cy = t[q + 1]; cy <= t[q + 3]; cy++) for (let cx = t[q]; cx <= t[q + 2]; cx++) if (g.own[cy * g.w + cx] === gid) return gid;
+    return 0; // already knocked off
+  }
+
   // A bullet reaching the page. Returns how much of the bullet's pierce it used up.
   hitTerrain(x, y, W, dx, dy, owner) {
     const g = this.grid, i = Math.floor(y / CELL) * g.w + Math.floor(x / CELL);
     const inside = x >= 0 && x < this.W && y >= 0 && y < this.H;
-    const o = inside ? g.own[i] : 0, m = inside ? g.mat[i] : SOLID;
+    const m = inside ? g.mat[i] : SOLID;
+    const o = (inside ? g.own[i] : 0) || (m === EMPTY ? this.letterHere(x, y) : 0);
     if (o > 0) { // a letter: knock the whole thing loose
       this.detachGlyph(o, dx * 230 + (this.rand() - 0.5) * 80, dy * 230 - 140 - this.rand() * 90, owner, false);
       return 1;
@@ -435,8 +457,12 @@ export class Game {
 
   damageBlock(bid, amt, x, y, vx, vy, owner, kick) {
     if (this.blockGone[bid]) return;
+    const hp = this.blockHp(bid), before = this.blockDmg[bid] / hp;
     this.blockDmg[bid] += amt;
-    if (this.blockDmg[bid] >= this.blockHp(bid)) this.breakBlock(bid, x, y, vx, vy, owner, kick);
+    const after = this.blockDmg[bid] / hp;
+    if (after >= 1) { this.breakBlock(bid, x, y, vx, vy, owner, kick); return; }
+    // a box shows it's weakening: cracks spread from the hit at 30, 55 and 80%
+    for (const t of [0.3, 0.55, 0.8]) if (before < t && after >= t) this.ev.push(['dent', r1(x), r1(y), t]);
   }
 
   // A box cracks into a few rigid shards, taking along whatever sits on it (its text, smaller boxes).
@@ -607,7 +633,7 @@ export class Game {
   pieceHitsPlayer(c, x, y, rot) {
     const s = c.shape, cs = Math.cos(rot), sn = Math.sin(rot);
     for (const p of this.players.values()) {
-      if (!p.alive || p.id === c.holder || (p.id === c.owner && c.immune > 0) || c.hits?.has(p.id)) continue;
+      if (!p.alive || p.id === c.holder || p.id === c.owner || c.hits?.has(p.id)) continue; // never your own throw
       const b = p.body;
       if (Math.abs(b.x - x) > c.rad + P.w || Math.abs(b.y - P.h / 2 - y) > c.rad + P.h) continue;
       for (const k of s.edge) {
@@ -652,7 +678,7 @@ export class Game {
     this.blast(x, y, r * 1.8, c.owner, 320);
     const splash = Math.min(c.rad, 14) + 18, dmg = throwDamage(Math.min(c.n, DEBRIS.hurtCells), speed) * 0.4;
     for (const p of this.players.values()) {
-      if (!p.alive || (p.id === c.owner && c.immune > 0)) continue;
+      if (!p.alive || p.id === c.owner) continue;
       const d = Math.hypot(p.body.x - x, p.body.y - P.h / 2 - y);
       if (d < splash) this.damage(p, dmg * (1 - d / splash), c.owner, 'debris', 0, -120);
     }
@@ -783,7 +809,7 @@ export class Game {
       if (dy < -90 && b.ground && this.rand() < 0.04) inp.jp = true;
       if (dy < -140 && !b.ground) { if (b.air > 0 && b.vy > -100) inp.jp = true; inp.jump = true; }
       if (dy > 90 && b.ground && this.rand() < 0.02) inp.dp = true;
-      p.aim = Math.atan2(t.body.y - P.h / 2 - (b.y - 22), dx) + (this.rand() - 0.5) * 0.12;
+      p.aim = Math.atan2(t.body.y - P.h / 2 - (b.y - 22), dx) + (this.rand() - 0.5) * 0.2;
       if (live) this.botAttack(p, t, Math.hypot(dx, dy), dt);
     } else {
       move = ai.wander;
@@ -820,7 +846,7 @@ export class Game {
       ai.fire = WEAPONS[1].cd;
       return;
     }
-    ai.fire = 0.25 + this.rand() * 0.7;
+    ai.fire = 0.45 + this.rand() * 0.9;
     const r = this.rand();
     if (r < 0.14) { this.grab(p); if (p.hold) { ai.charge = 0; return; } }
     if (r > 0.94) { this.grenade(p, p.aim - 0.35 * Math.sign(Math.cos(p.aim) || 1)); return; }

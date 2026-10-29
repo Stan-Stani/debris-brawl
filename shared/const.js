@@ -33,7 +33,7 @@ export const PLAYER = {
 export const WEAPONS = [
   { id: 'pistol', name: 'Pistol', auto: false, cd: 0.18, pellets: 1, spread: 0.012, speed: 2600, dmg: 16, pierce: 5, hole: 4, range: 1.2, gun: 9 },
   { id: 'smg', name: 'SMG', auto: true, cd: 0.075, pellets: 1, spread: 0.07, speed: 2400, dmg: 8, pierce: 3, hole: 3, range: 1, gun: 12 },
-  { id: 'shotgun', name: 'Shotgun', auto: false, cd: 0.7, pellets: 9, spread: 0.17, speed: 2100, dmg: 11, pierce: 3, hole: 4, range: 0.32, gun: 13 },
+  { id: 'shotgun', name: 'Shotgun', auto: false, cd: 0.7, pellets: 9, spread: 0.17, speed: 2100, dmg: 7, pierce: 3, hole: 4, range: 0.32, gun: 13 }, // 63 point-blank, not a one-shot
   { id: 'rocket', name: 'Rocket', auto: false, cd: 0.95, kind: 'rocket', pellets: 1, spread: 0, speed: 900, dmg: 75, radius: 48, gun: 15 },
   { id: 'rail', name: 'Railgun', auto: false, cd: 1.3, pellets: 1, spread: 0, speed: 7000, dmg: 70, pierce: 60, hole: 5, range: 0.5, gun: 17 },
 ];
@@ -52,6 +52,7 @@ export const DEBRIS = {
   minSpeed: 380, maxSpeed: 1150,
   gravity: 1300,
   dmgBase: 8, dmgPerCell: 0.42,
+  maxDmg: 80,         // even a slab of the page can't one-shot you
   hurtSpeed: 150,     // slower than this and it just bumps you
   smash: 480,         // faster than this into terrain and it bursts, cratering the page
   grabCd: 0.3,

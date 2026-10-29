@@ -2,7 +2,7 @@
 // arrives from the match (server or solo) and is replayed: terrain ops exactly, other players smoothed.
 import { CELL, TICK, PLAYER as P, WEAPONS, GRENADE, DEBRIS, COLORS, INTERP_DELAY, FL_FLY, FL_FLIP, FL_CHARGE } from '/shared/const.js';
 import { newBody, stepBody } from '/shared/physics.js';
-import { applyOp, stepParticle, throwVelocity, smashParticles, pageShape } from '/shared/debris.js';
+import { applyOp, stepParticle, throwVelocity, smashParticles, pageShape, pieceDistance } from '/shared/debris.js';
 import { css, luma, rgb } from '/shared/grid.js';
 import { unpackGrid } from './codec.js';
 import { Sfx } from './audio.js';
@@ -184,7 +184,12 @@ export class ClientGame {
       case 'hit': {
         const [, pid, amt, by] = e;
         const p = this.players.get(pid), pos = this.posOf(pid);
-        if (pos) this.floaters.push({ x: pos.x + (Math.random() - 0.5) * 10, y: pos.y - 40, text: `-${amt}`, color: by === me.id ? '#ffd23f' : '#ff4d4d', t: 0 });
+        if (pos) {
+          // a shotgun's nine pellets read as one number, not nine stacked on top of each other
+          const f = this.floaters.find((o) => o.pid === pid && o.by === by && o.t < 0.15);
+          if (f) { f.amt += amt; f.text = `-${f.amt}`; }
+          else this.floaters.push({ pid, by, amt, x: pos.x + (Math.random() - 0.5) * 10, y: pos.y - 40, text: `-${amt}`, color: by === me.id ? '#ffd23f' : '#ff4d4d', t: 0 });
+        }
         if (pid === me.id) { me.lastHurt = this.clock; this.sfx.play('hurt', 0.8); this.shake(Math.min(8, amt / 6)); }
         else if (by === me.id) { this.hitT = this.clock; this.sfx.play('hitmark'); }
         if (p && pos) this.sparks(pos.x, pos.y - 18, p.color, 5);
@@ -225,6 +230,7 @@ export class ClientGame {
         break;
       }
       case 'crack': this.sound('crunch', { x: e[1], y: e[2] }, 0.6); this.sparks(e[1], e[2], this.ink, 8); break;
+      case 'dent': this.drawCracks(e[1], e[2], e[3]); this.sound('thud', { x: e[1], y: e[2] }, 0.5 + e[3] * 0.4); break;
       case 'grab': this.ents.delete(e[2]); this.sound('grab', this.posOf(e[1])); break;
       case 'throw': if (e[1] !== me.id) this.sound('throw', this.posOf(e[1])); break;
       case 'smash': {
@@ -334,7 +340,7 @@ export class ClientGame {
       idx.forEach((i, k) => { c.fillStyle = this.cssOf(cols[k]); c.fillRect(((i % g.w) - x0) * CELL, (((i / g.w) | 0) - y0) * CELL, CELL, CELL); });
     }
     const dx = (x0 - shape.ox - 0.5) * CELL, dy = (y0 - shape.oy - 0.5) * CELL;
-    const sp = { cv, dx, dy, dw: w, dh: h, n: idx.length, rad: shape.rad, down: shape.down, cols, off: shape.off, smooth: true };
+    const sp = { cv, dx, dy, dw: w, dh: h, n: idx.length, rad: shape.rad, down: shape.down, cols, off: shape.off, shape, smooth: true };
     if (idx.length <= 40) return sp; // letters stay as they are
     // shards of a box get a thin rim, so a white piece still reads against a white page
     const rim = document.createElement('canvas');
@@ -564,7 +570,7 @@ export class ClientGame {
       const steps = Math.ceil((Math.hypot(t.vx, t.vy) * dt) / 3);
       for (let k = 0; k < steps; k++) {
         t.x += (t.vx * dt) / steps; t.y += (t.vy * dt) / steps;
-        if (g.atPx(t.x, t.y) !== 0 || this.tracerHits(t)) { this.sparks(t.x, t.y, '#ffe9a8', 2); return false; }
+        if (g.atPx(t.x, t.y) !== 0 || this.tracerHits(t)) { this.sparks(t.x, t.y, '#ffe9a8', 5); this.sparks(t.x, t.y, this.ink, 2); return false; }
       }
       return t.life > 0 && t.y < this.H + 100;
     });
@@ -743,20 +749,42 @@ export class ClientGame {
     const power = me.charging ? me.charge : 0;
     const v = throwVelocity(me.aim, power, sp.n, b.vx, b.vy);
     let x = b.x, y = b.y - P.h - sp.down - 1, vx = v.vx, vy = v.vy;
-    ctx.fillStyle = me.charging ? (this.dark ? 'rgba(255,255,255,0.85)' : 'rgba(0,0,0,0.7)') : (this.dark ? 'rgba(255,255,255,0.3)' : 'rgba(0,0,0,0.25)');
+    ctx.fillStyle = me.charging ? '#ffd23f' : 'rgba(255,255,255,0.9)';
+    ctx.strokeStyle = this.ink; ctx.lineWidth = 1.2;
     let clear = this.grid.atPx(x, y) === 0; // like the server: it passes through what it starts inside
     for (let i = 0; i < 40; i++) {
       for (let k = 0; k < 3; k++) { vy += DEBRIS.gravity * 0.01; x += vx * 0.01; y += vy * 0.01; }
       const solid = this.grid.atPx(x, y) !== 0;
       if (y > this.H || (clear && solid)) break;
       if (!solid) clear = true;
-      if (i % 2 === 0) ctx.fillRect(x - 1.5, y - 1.5, 3, 3);
+      if (i % 2 === 0) { ctx.beginPath(); ctx.arc(x, y, me.charging ? 3 : 2.4, 0, Math.PI * 2); ctx.fill(); ctx.stroke(); }
     }
     if (me.charging) { // charge meter over the rock
       const cx = b.x, cy = b.y - P.h - sp.down * 2 - 10;
       ctx.fillStyle = this.paper; ctx.fillRect(cx - 16, cy, 32, 5);
       ctx.fillStyle = me.charge >= 1 ? '#ff4d4d' : '#ffd23f'; ctx.fillRect(cx - 15, cy + 1, 30 * me.charge, 3);
     }
+  }
+
+  // Jagged cracks drawn into the page where a box is wearing down (just the look; cells don't change).
+  drawCracks(x, y, level) {
+    const ctx = this.pageCtx, n = 3 + Math.round(level * 4), len = 10 + level * 34;
+    ctx.save();
+    ctx.globalCompositeOperation = 'source-atop'; // only on what's there
+    ctx.strokeStyle = this.dark ? 'rgba(255,255,255,0.55)' : 'rgba(20,20,20,0.55)';
+    ctx.lineWidth = 1.3;
+    for (let k = 0; k < n; k++) {
+      let a = Math.random() * Math.PI * 2, px = x, py = y;
+      ctx.beginPath(); ctx.moveTo(px, py);
+      for (let s = 0; s < 4; s++) {
+        a += (Math.random() - 0.5) * 1.2;
+        const step = (len / 4) * (0.6 + Math.random() * 0.8);
+        px += Math.cos(a) * step; py += Math.sin(a) * step;
+        ctx.lineTo(px, py);
+      }
+      ctx.stroke();
+    }
+    ctx.restore();
   }
 
   // The piece E would grab (same rule as the server: nearest one within reach), marked with a key badge.
@@ -766,7 +794,8 @@ export class ClientGame {
     for (const e of this.ents.values()) {
       const sp = e.k === 2 && this.sprites.get(e.id);
       if (!sp || e.drawX === undefined) continue;
-      const d = Math.hypot(e.drawX - cx, e.drawY - cy) - sp.rad;
+      if (Math.hypot(e.drawX - cx, e.drawY - cy) - sp.rad >= DEBRIS.reach + P.h / 2) continue;
+      const d = pieceDistance(sp.shape, e.drawX, e.drawY, e.rot, cx, b.y - P.h, b.y);
       if (d < DEBRIS.reach && d < bd) { best = { e, sp }; bd = d; }
     }
     if (!best) return;

@@ -122,6 +122,19 @@ export function pieceShape(ix, iy) {
 }
 
 // cells of the page itself (a letter, a shard of a box)
+// How far (px) a piece lying at (x, y, rot) is from a standing body: the vertical line at px from
+// top to bottom (head to feet), so a letter by your feet is as reachable as one at your chest.
+export function pieceDistance(shape, x, y, rot, px, top, bottom = top) {
+  const cs = Math.cos(rot), sn = Math.sin(rot);
+  let best = Infinity;
+  for (const k of shape.edge) {
+    const dx = shape.off[2 * k], dy = shape.off[2 * k + 1];
+    const wx = x + (dx * cs - dy * sn) * CELL, wy = y + (dx * sn + dy * cs) * CELL;
+    best = Math.min(best, Math.hypot(wx - px, wy - Math.min(bottom, Math.max(top, wy))));
+  }
+  return best;
+}
+
 export function pageShape(idx, w) {
   return pieceShape(idx.map((i) => i % w), idx.map((i) => (i / w) | 0));
 }
@@ -134,14 +147,14 @@ export function rockShape(n) {
 
 // Heavier chunks fly slower; full charge throws hard.
 export function throwVelocity(a, power, n, bvx = 0, bvy = 0) {
-  const mass = Math.min(1.1, Math.max(0.4, 1.1 / (1 + n / 250))); // a slab of a page flies a lot slower than a pebble
+  const mass = Math.min(1.1, Math.max(0.6, 1.1 / (1 + n / 250))); // a slab flies slower than a pebble, but still flies
   const s = (DEBRIS.minSpeed + (DEBRIS.maxSpeed - DEBRIS.minSpeed) * power) * mass;
   return { vx: Math.cos(a) * s + bvx * 0.4, vy: Math.sin(a) * s + bvy * 0.2 };
 }
 
 export function throwDamage(n, speed) {
   if (speed < DEBRIS.hurtSpeed) return 0;
-  return Math.round((DEBRIS.dmgBase + n * DEBRIS.dmgPerCell) * Math.min(1.5, Math.max(0.5, speed / 700)));
+  return Math.min(DEBRIS.maxDmg, Math.round((DEBRIS.dmgBase + n * DEBRIS.dmgPerCell) * Math.min(1.5, Math.max(0.5, speed / 700))));
 }
 
 // Pieces of a burst chunk (same seed on server and clients). off: the piece's cell offsets.

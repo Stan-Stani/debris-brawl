@@ -146,7 +146,7 @@ test('big shards of a box can be lifted and thrown; ones over the limit are too 
   const huge = [];
   for (let y = 120; y < 150; y++) for (let x = 0; x < 120; x++) huge.push(y * 200 + x); // 3600 cells
   const slab = game.breakOff(huge, 0, 0, 0, 0, false);
-  slab.x = 70; slab.y = 160; slab.sleep = true;
+  slab.x = 70; slab.y = 185; slab.sleep = true; // right against her chest
   game.time += 1;
   game.handle(a.id, { t: 'e' });
   assert.equal(a.hold, 0);
@@ -166,4 +166,35 @@ test('a piece carried up into the text line overhead still flies where it was ai
   game.handle(a.id, { t: 'th', a: -0.8, p: 0.5 });
   steps(game, 0.25);
   assert.ok(c.x - x0 > 100, `it flew on instead of bouncing off the line (moved ${(c.x - x0).toFixed(0)} px)`);
+});
+
+test('your own thrown piece never hurts you, even dropped on your own head', () => {
+  const game = new Game(flatGrid(), { seed: 12, timed: false });
+  const a = game.addPlayer('Ana');
+  steps(game, 0.6);
+  Object.assign(a.body, newBody(100, 240)); a.prot = 0;
+  const idx = [];
+  for (let y = 125; y < 150; y++) for (let x = 150; x < 200; x++) idx.push(y * 200 + x);
+  const slab = game.breakOff(idx, 0, 0, 0, 0, false);
+  slab.x = 105; slab.y = 200; slab.sleep = true;
+  game.handle(a.id, { t: 'e' });
+  assert.equal(a.hold, slab.id);
+  game.handle(a.id, { t: 'th', a: Math.PI / 2, p: 0 }); // straight down onto herself
+  steps(game, 2);
+  assert.equal(a.hp, 100);
+});
+
+test('a pile of shards lying still does not stop bullets', () => {
+  const game = new Game(flatGrid(), { seed: 13, timed: false });
+  const a = game.addPlayer('Ana'), v = game.addPlayer('Vik');
+  steps(game, 0.6);
+  Object.assign(a.body, newBody(60, 240)); a.prot = 0;
+  Object.assign(v.body, newBody(300, 240)); v.prot = 0;
+  const idx = [];
+  for (let y = 125; y < 150; y++) for (let x = 150; x < 200; x++) idx.push(y * 200 + x);
+  const slab = game.breakOff(idx, 0, 0, 0, 0, false); // lying on the floor between them
+  slab.x = 180; slab.y = 212; slab.sleep = true; slab.vx = slab.vy = 0;
+  game.handle(a.id, { t: 'f', w: 0, a: [Math.atan2(240 - 17 - 218, 300 - 60)] });
+  steps(game, 0.3);
+  assert.ok(v.hp < 100, 'the shot went through the resting shard');
 });

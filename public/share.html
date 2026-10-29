@@ -1,0 +1,35 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Send a Screenshot</title>
+<link rel="icon" href="/favicon.svg" type="image/svg+xml">
+<link rel="stylesheet" href="/style.css">
+</head>
+<body class="share">
+<main class="screen">
+  <div class="card">
+    <h1>SEND A <span>SCREENSHOT</span></h1>
+    <p class="tag">Paste a screenshot (⌘V or Ctrl+V anywhere on this page), drop pictures here, or pick files.
+      They're saved in the game's <code>uploads/</code> folder so Claude can look at them.</p>
+
+    <div id="drop" class="drop" tabindex="0" aria-label="Drop pictures here">
+      <strong>⌘V to paste</strong>
+      <span>or drag pictures here, or</span>
+      <button id="pick" type="button">Choose pictures</button>
+      <input id="file" type="file" accept="image/*" multiple hidden>
+    </div>
+
+    <label class="field stack">Note to go with the next picture (optional)
+      <textarea id="note" rows="2" maxlength="2000" placeholder="e.g. the original keeps whole letters when they get hit"></textarea>
+    </label>
+
+    <p id="err" class="err" role="alert"></p>
+    <ul id="list" class="shots" aria-live="polite"></ul>
+    <p class="hint"><a href="/">← Back to the game</a></p>
+  </div>
+</main>
+<script type="module" src="/js/share.js"></script>
+</body>
+</html>

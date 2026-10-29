@@ -6,6 +6,7 @@ import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
 import { fetchPage, fetchImage, UserError } from './fetchPage.js';
 import { Rooms } from './rooms.js';
+import { uploadHandler } from './uploads.js';
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const MOUNTS = [['/shared/', path.join(ROOT, 'shared')], ['/', path.join(ROOT, 'public')]];
@@ -90,10 +91,16 @@ async function serveStatic(req, res, pathname) {
   res.end('Not found');
 }
 
-export function startServer({ port = 8787, host = '0.0.0.0' } = {}) {
+export function startServer({ port = 8787, host = '0.0.0.0', uploadDir = path.join(ROOT, 'uploads'), uploadsFromLan = false } = {}) {
   const rooms = new Rooms();
+  const upload = uploadHandler(uploadDir, { allowLan: uploadsFromLan });
   const server = http.createServer((req, res) => {
-    const url = new URL(req.url, 'http://local');
+    let url;
+    try { url = new URL(req.url, 'http://local'); } catch { res.writeHead(400); return res.end(); }
+    if (url.pathname === '/api/upload') {
+      if (req.method !== 'POST') { res.writeHead(405); return res.end(); }
+      return upload(req, res, (code, body) => json(res, code, body));
+    }
     if (req.method !== 'GET' && req.method !== 'HEAD') { res.writeHead(405); return res.end(); }
     if (url.pathname.startsWith('/api/')) return api(req, res, url);
     return serveStatic(req, res, url.pathname);
@@ -101,7 +108,8 @@ export function startServer({ port = 8787, host = '0.0.0.0' } = {}) {
 
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8 << 20 });
   server.on('upgrade', (req, socket, head) => {
-    const url = new URL(req.url, 'http://local');
+    let url;
+    try { url = new URL(req.url, 'http://local'); } catch { socket.destroy(); return; }
     // only our own page may open a game socket (stops other sites driving a visitor's browser into rooms)
     const origin = req.headers.origin;
     let sameOrigin = !origin;
@@ -110,7 +118,7 @@ export function startServer({ port = 8787, host = '0.0.0.0' } = {}) {
     wss.handleUpgrade(req, socket, head, (ws) => {
       ws.isAlive = true;
       ws.on('pong', () => { ws.isAlive = true; });
-      rooms.connect(ws, url.searchParams);
+      rooms.connect(ws, url.searchParams, req.socket.remoteAddress ?? '');
     });
   });
   const ping = setInterval(() => {
@@ -132,7 +140,7 @@ export function startServer({ port = 8787, host = '0.0.0.0' } = {}) {
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   const port = Number(process.env.PORT) || 8787;
   const host = process.env.HOST || '0.0.0.0';
-  startServer({ port, host }).then(({ port: p }) => {
+  startServer({ port, host, uploadDir: process.env.UPLOAD_DIR || undefined, uploadsFromLan: process.env.UPLOADS === 'lan' }).then(({ port: p }) => {
     console.log(`Debris Brawl on http://localhost:${p}  (listening on ${host}; friends on your network can join via your IP)`);
   });
 }

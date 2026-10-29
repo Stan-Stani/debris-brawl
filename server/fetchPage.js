@@ -89,6 +89,8 @@ async function resolvePublic(hostname) {
 
 function request(url, addr, accept, timeoutMs) {
   return new Promise((resolve, reject) => {
+    // the socket timeout only catches silence; this also stops headers trickling in a byte at a time
+    const deadline = setTimeout(() => req.destroy(new UserError('The site took too long to answer.')), timeoutMs);
     const lib = url.protocol === 'https:' ? https : http;
     const req = lib.request({
       protocol: url.protocol,
@@ -104,9 +106,9 @@ function request(url, addr, accept, timeoutMs) {
       },
       // connect to the address we already checked, never a fresh DNS answer
       lookup: (_h, opts, cb) => (opts && opts.all ? cb(null, [{ address: addr.address, family: addr.family }]) : cb(null, addr.address, addr.family)),
-    }, resolve);
+    }, (res) => { clearTimeout(deadline); resolve(res); });
     req.on('timeout', () => req.destroy(new UserError('The site took too long to answer.')));
-    req.on('error', (e) => reject(e instanceof UserError ? e : new UserError("Couldn't reach that site.")));
+    req.on('error', (e) => clearTimeout(deadline) || reject(e instanceof UserError ? e : new UserError("Couldn't reach that site.")));
     req.end();
   });
 }
@@ -118,7 +120,7 @@ function readCapped(res, max, timeoutMs) {
     if (enc === 'gzip' || enc === 'x-gzip') stream = res.pipe(zlib.createGunzip());
     else if (enc === 'deflate') stream = res.pipe(zlib.createInflate());
     else if (enc === 'br') stream = res.pipe(zlib.createBrotliDecompress());
-    else if (enc && enc !== 'identity') { res.resume(); reject(new UserError('The site sent something we cannot read.')); return; }
+    else if (enc && enc !== 'identity') { res.destroy(); reject(new UserError('The site sent something we cannot read.')); return; }
     const chunks = [];
     let n = 0, done = false;
     const fail = (e) => { if (done) return; done = true; clearTimeout(timer); res.destroy(); if (stream !== res) stream.destroy(); reject(e); };
@@ -140,14 +142,14 @@ export async function fetchSafe(raw, { accept, types, maxBytes, timeoutMs = 1000
     const addr = await resolvePublic(url.hostname);
     const res = await request(url, addr, accept, timeoutMs);
     if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location) {
-      res.resume();
+      res.destroy();
       url = parseTarget(new URL(res.headers.location, url).href); // every hop gets checked again
       continue;
     }
-    if (res.statusCode !== 200) { res.resume(); throw new UserError(`The site answered with an error (${res.statusCode}).`); }
+    if (res.statusCode !== 200) { res.destroy(); throw new UserError(`The site answered with an error (${res.statusCode}).`); }
     const ctype = String(res.headers['content-type'] || '');
     const type = ctype.split(';')[0].trim().toLowerCase();
-    if (!types.includes(type)) { res.resume(); throw new UserError(`That address isn't a web page (${type || 'unknown type'}).`); }
+    if (!types.includes(type)) { res.destroy(); throw new UserError(`That address isn't a web page (${type || 'unknown type'}).`); }
     const body = await readCapped(res, maxBytes, timeoutMs);
     return { body, url: url.href, type, charset: /charset=["']?([\w-]+)/i.exec(ctype)?.[1] };
   }

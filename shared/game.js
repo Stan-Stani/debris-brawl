@@ -34,6 +34,7 @@ export class Game {
     this.ents = new Map(); this.bullets = []; this.parts = [];
     this.ops = []; this.ev = []; this.fallQ = [];
     this.nextEnt = 1; this.seq = 1; this.time = 0;
+    this.rev = (this.rev ?? 0) + 1; // bumps on every terrain change
     this.round = { state: 'play', t: ROUND_TIME };
     for (const p of this.players.values()) this.resetPlayer(p);
     this.needsReload = true;
@@ -121,9 +122,9 @@ export class Game {
         b.vx = num(m.vx, -3000, 3000) ?? 0; b.vy = num(m.vy, -3000, 3000) ?? 0;
         p.aim = num(m.a, -10, 10) ?? p.aim;
         p.face = m.f === -1 ? -1 : 1;
-        const w = m.w | 0;
+        const w = typeof m.w === 'number' ? m.w | 0 : -1; // never coerce objects: their toString can throw
         if (w >= 0 && w < WEAPONS.length) p.weapon = w;
-        p.fl = (m.fl | 0) & (FL_FLY | FL_FLIP | FL_CHARGE);
+        p.fl = (typeof m.fl === 'number' ? m.fl | 0 : 0) & (FL_FLY | FL_FLIP | FL_CHARGE);
         return;
       }
       case 'f': if (live) this.fire(p, m); return;
@@ -134,7 +135,7 @@ export class Game {
   }
 
   fire(p, m) {
-    const w = m.w | 0, W = WEAPONS[w];
+    const w = typeof m.w === 'number' ? m.w | 0 : -1, W = WEAPONS[w];
     if (!W || p.hold || this.time < p.cd[w]) return;
     const as = (Array.isArray(m.a) ? m.a : [m.a]).slice(0, W.pellets).map((a) => num(a, -10, 10)).filter((a) => a !== null);
     if (!as.length) return;
@@ -268,6 +269,7 @@ export class Game {
   op(o) {
     applyOp(this.grid, o, (pt) => this.addPart(pt), (i) => this.fallQ.push(i));
     this.ops.push(o);
+    this.rev++;
   }
 
   carve(x, y, r, frac, power) { this.op(['c', r2(x), r2(y), r2(r), this.seq++, frac, power]); }
@@ -513,7 +515,7 @@ export class Game {
       }
     }
     this.parts.length = n;
-    if (bake.length) this.ops.push(['b', ...bake]); // applied cell by cell above, same as applyOp would
+    if (bake.length) { this.ops.push(['b', ...bake]); this.rev++; } // applied cell by cell above, same as applyOp would
   }
 
   // Rubble sitting on something that just got blasted away tumbles down.
@@ -528,6 +530,7 @@ export class Game {
       const o = ['f', this.seq++, ...list];
       applyOp(g, o, (pt) => this.addPart(pt));
       this.ops.push(o);
+      this.rev++;
     }
   }
 

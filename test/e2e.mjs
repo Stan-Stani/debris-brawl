@@ -1,6 +1,7 @@
 // End-to-end: real server, two headless browsers in one room, debris thrown from one at the other.
 // Run: npm run e2e   (needs Chrome, or set CHROME=/path/to/chrome; uses playwright-core)
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { chromium } from 'playwright-core';
@@ -17,7 +18,8 @@ async function waitFor(page, fn, arg, ms = 15000) {
   try { await page.waitForFunction(fn, arg, { timeout: ms, polling: 100 }); return true; } catch { return false; }
 }
 
-const { port, close } = await startServer({ port: 0, host: '127.0.0.1' });
+const UPLOADS = fs.mkdtempSync(path.join(os.tmpdir(), 'db-e2e-up-'));
+const { port, close } = await startServer({ port: 0, host: '127.0.0.1', uploadDir: UPLOADS });
 const base = `http://127.0.0.1:${port}`;
 const browser = await chromium.launch({ executablePath: CHROME, headless: true, args: ['--autoplay-policy=no-user-gesture-required'] });
 const errors = [];
@@ -194,6 +196,23 @@ try {
     check(`switch to ${id}`, ok);
   }
 
+  // --- screenshot page: pick a file, then paste one ---
+  const sh = await open('share');
+  await sh.goto(`${base}/share.html`);
+  const png = Buffer.from('89504e470d0a1a0a0000000d49484452000000010000000108060000001f15c4890000000d49444154789c63f8cfc0f01f0005000201a5e3b5a40000000049454e44ae426082', 'hex');
+  await sh.fill('#note', 'picked from disk');
+  await sh.setInputFiles('#file', { name: 'shot.png', mimeType: 'image/png', buffer: png });
+  check('share page uploads a picked file', await waitFor(sh, () => document.querySelectorAll('.shots li strong')[0]?.textContent === 'Saved', null, 5000));
+  await sh.evaluate((bytes) => {
+    const dt = new DataTransfer();
+    dt.items.add(new File([new Uint8Array(bytes)], 'clip.png', { type: 'image/png' }));
+    document.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true }));
+  }, [...png]);
+  check('share page uploads a pasted screenshot', await waitFor(sh, () => [...document.querySelectorAll('.shots li strong')].filter((s) => s.textContent === 'Saved').length === 2, null, 5000));
+  const saved = fs.readdirSync(UPLOADS).filter((f) => f.endsWith('.png'));
+  check('both pictures landed in uploads/', saved.length === 2 && fs.readdirSync(UPLOADS).some((f) => f.endsWith('.txt')), saved.join(', '));
+  await sh.screenshot({ path: path.join(OUT, 'share.png') });
+
   // --- a real website through the proxy (needs internet) ---
   if (process.env.E2E_URL !== 'off') {
     const url = process.env.E2E_URL || 'https://en.wikipedia.org/wiki/Stick_figure';
@@ -212,6 +231,7 @@ try {
   check('no script errors in the browsers', errors.length === 0, `${errors.length}`);
   await browser.close();
   close();
+  fs.rmSync(UPLOADS, { recursive: true, force: true });
   const failed = results.filter(([ok]) => !ok).length;
   console.log(`\n${results.length - failed}/${results.length} passed`);
   process.exitCode = failed ? 1 : 0;

@@ -53,6 +53,7 @@ export class ClientGame {
 
   async setup(m) {
     const grid = m.grid ?? await unpackGrid(m.map);
+    if (this.destroyed) return; // left while the map was unpacking
     this.grid = grid; this.W = grid.w * CELL; this.H = grid.h * CELL;
     this.bgCss = css(grid.pageBg);
     this.dark = luma(grid.pageBg) < 0.45;
@@ -325,7 +326,7 @@ export class ClientGame {
 
   setPaused(p) {
     this.paused = p;
-    if (p) this.clearInput();
+    if (p) { this.clearInput(); this.me.charging = false; this.me.charge = 0; } // or resuming would fire off the wind-up
     if (this.net.solo) this.net.paused = p;
   }
 
@@ -829,6 +830,7 @@ export class ClientGame {
   }
 
   destroy() {
+    this.destroyed = true;
     cancelAnimationFrame(this.raf);
     for (const f of this.unlisten ?? []) f();
     this.ready = false;

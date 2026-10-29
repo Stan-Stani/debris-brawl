@@ -1,5 +1,5 @@
 // The page as a grid of cells: what each cell is made of and its colour, plus a non-colliding backdrop.
-import { CELL, EMPTY, RUBBLE } from './const.js';
+import { CELL, EMPTY, RUBBLE, LAYOUT_W, MAX_H } from './const.js';
 
 // Colours are stored as 0xAABBGGRR so they drop straight into ImageData.
 export const rgb = (r, g, b) => ((255 << 24) | (b << 16) | (g << 8) | r) >>> 0;
@@ -9,7 +9,8 @@ export const css = (c) => `rgb(${red(c)},${green(c)},${blue(c)})`;
 export const luma = (c) => (0.299 * red(c) + 0.587 * green(c) + 0.114 * blue(c)) / 255;
 
 const MAGIC = 0x31474244; // "DBG1"
-export const MAX_GW = 1024, MAX_GH = 2048;
+// the biggest map a page can produce; anything larger is not from our rasterizer
+export const MAX_GW = LAYOUT_W / CELL, MAX_GH = Math.ceil(MAX_H / CELL);
 
 export class Grid {
   constructor(w, h) {

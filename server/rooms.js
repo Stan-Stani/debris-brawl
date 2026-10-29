@@ -8,16 +8,18 @@ import { TICK, NET_TICKS, MAX_PLAYERS } from '../shared/const.js';
 const CODE_CHARS = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 export const DEMO_MAPS = ['news', 'wiki', 'shop', 'devlog'];
 const EMPTY_ROOM_TTL = 30_000;
+const MAP_WAIT = 90_000;      // a host gets this long to send a page
 const MAX_ROOMS = 200;
+const MAX_PER_IP = 16;
 
-export const packGrid = (g) => zlib.deflateSync(g.encode()).toString('base64');
+export const packGrid = (g) => zlib.deflateSync(g.encode(), { level: 1 }).toString('base64');
 export function unpackGrid(b64) {
   if (typeof b64 !== 'string' || b64.length > 8_000_000) throw new Error('map too big');
-  const raw = zlib.inflateSync(Buffer.from(b64, 'base64'), { maxOutputLength: 40 << 20 });
+  const raw = zlib.inflateSync(Buffer.from(b64, 'base64'), { maxOutputLength: 12 << 20 });
   return Grid.decode(new Uint8Array(raw.buffer, raw.byteOffset, raw.length));
 }
 
-export const cleanText = (s, n) => String(s ?? '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, n);
+export const cleanText = (s, n) => (typeof s === 'string' ? s : '').replace(/[\u0000-\u001f\u007f-\u009f]/g, '').trim().slice(0, n);
 const pick = (a) => a[crypto.randomInt(a.length)];
 
 class Conn {
@@ -46,7 +48,8 @@ class Room {
   constructor(code, isPublic) {
     this.code = code; this.public = isPublic;
     this.conns = new Set(); this.host = null; this.game = null;
-    this.mapName = ''; this.tickN = 0; this.emptySince = Date.now();
+    this.mapName = ''; this.tickN = 0; this.emptySince = Date.now(); this.created = Date.now();
+    this.packed = null; this.packedRev = -1;
   }
 
   get humans() { return this.conns.size; }
@@ -68,8 +71,14 @@ class Room {
     if (this.game.players.size >= MAX_PLAYERS) this.game.removeBot();
     const p = this.game.addPlayer(conn.name);
     conn.pid = p.id;
-    conn.send({ t: 'welcome', code: this.code, host: this.host?.pid ?? 0, public: this.public, map: packGrid(this.game.grid), mapName: this.mapName, ...this.game.welcome(p.id) });
+    conn.send({ t: 'welcome', code: this.code, host: this.host?.pid ?? 0, public: this.public, map: this.pack(), mapName: this.mapName, ...this.game.welcome(p.id) });
     this.autoBots();
+  }
+
+  // one compressed copy of the page per terrain change, however many people join
+  pack() {
+    if (this.packedRev !== this.game.rev) { this.packed = packGrid(this.game.grid); this.packedRev = this.game.rev; }
+    return this.packed;
   }
 
   remove(conn) {
@@ -121,7 +130,7 @@ class Room {
     if (!g) return;
     if (g.needsReload) {
       g.needsReload = false;
-      const map = packGrid(g.grid);
+      const map = this.pack();
       for (const c of this.conns) if (c.pid) c.send({ t: 'reload', map, mapName: this.mapName, host: this.host?.pid ?? 0, ...g.welcome(c.pid) });
     }
     const msg = JSON.stringify(g.flush());
@@ -142,6 +151,7 @@ class Room {
 export class Rooms {
   constructor() {
     this.rooms = new Map();
+    this.perIp = new Map();
     let last = performance.now(), acc = 0;
     this.timer = setInterval(() => {
       const now = performance.now();
@@ -151,7 +161,13 @@ export class Rooms {
         acc -= TICK;
         for (const r of this.rooms.values()) r.tick();
       }
-      for (const [code, r] of this.rooms) if (!r.conns.size && Date.now() - r.emptySince > EMPTY_ROOM_TTL) this.rooms.delete(code);
+      for (const [code, r] of this.rooms) {
+        if (!r.conns.size && Date.now() - r.emptySince > EMPTY_ROOM_TTL) this.rooms.delete(code);
+        else if (!r.game && Date.now() - r.created > MAP_WAIT) { // host never sent a page: free the slot
+          for (const c of r.conns) { c.send({ t: 'error', msg: 'The host never picked a page.' }); c.ws.close(); }
+          this.rooms.delete(code);
+        }
+      }
     }, 4);
   }
 
@@ -164,8 +180,12 @@ export class Rooms {
     return r;
   }
 
-  connect(ws, params) {
+  connect(ws, params, ip = '') {
     const conn = new Conn(ws, cleanText(params.get('name'), 16) || 'Player');
+    const n = (this.perIp.get(ip) ?? 0) + 1;
+    if (n > MAX_PER_IP) { conn.send({ t: 'error', msg: 'Too many connections from your address.' }); ws.close(); return; }
+    this.perIp.set(ip, n);
+    ws.on('close', () => { const k = (this.perIp.get(ip) ?? 1) - 1; if (k > 0) this.perIp.set(ip, k); else this.perIp.delete(ip); });
     const want = String(params.get('room') || 'new').toUpperCase();
     const refuse = (msg) => { conn.send({ t: 'error', msg }); ws.close(); };
     let room;
@@ -185,7 +205,8 @@ export class Rooms {
       if (isBinary || !conn.allow()) return;
       let m;
       try { m = JSON.parse(data); } catch { return; }
-      if (m && typeof m === 'object' && !Array.isArray(m)) room.onMessage(conn, m);
+      if (!m || typeof m !== 'object' || Array.isArray(m)) return;
+      try { room.onMessage(conn, m); } catch (e) { console.error('bad message from', conn.name, e); } // one client must never take the server down
     });
     ws.on('close', () => room.remove(conn));
   }

@@ -4,6 +4,7 @@ import { WsNet, LocalNet } from './net.js';
 import { loadPage, DEMO_MAPS } from './raster.js';
 import { packGrid } from './codec.js';
 import { Sfx } from './audio.js';
+import { imagesIn, sendShot } from './upload.js';
 
 const $ = (id) => document.getElementById(id);
 const canvas = $('game');
@@ -209,6 +210,18 @@ $('sound').addEventListener('change', (e) => sfx.setOn(e.target.checked));
 window.addEventListener('keydown', (e) => {
   if (e.code === 'Escape' && !$('pause').classList.contains('hidden')) { e.stopImmediatePropagation(); setPause(false); }
 }, true);
+
+// a screenshot pasted on the menu goes straight to uploads/ (the share page has drag and drop too)
+document.addEventListener('paste', async (e) => {
+  if ($('menu').classList.contains('hidden')) return;
+  const files = imagesIn(e.clipboardData);
+  if (!files.length) return;
+  e.preventDefault();
+  for (const f of files) {
+    $('menuerr').textContent = 'Sending screenshot…';
+    try { $('menuerr').textContent = `Screenshot saved as uploads/${(await sendShot(f)).name}`; } catch (err) { $('menuerr').textContent = err.message; }
+  }
+});
 
 const params = new URLSearchParams(location.search);
 const invite = params.get('room');

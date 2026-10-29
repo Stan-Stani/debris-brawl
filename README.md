@@ -66,7 +66,12 @@ Use `HOST=127.0.0.1 npm start` to keep it local, `PORT=…` to change the port.
 - serve images with `Content-Security-Policy: sandbox` and `nosniff` (SVG is allowed only because of that);
 - are rate-limited per IP.
 
-Pages that build themselves with JavaScript come out nearly empty, since their scripts never run.
+Pages that build their content with JavaScript (listings, product grids) are first opened in a headless
+Chrome on the server (`server/render.js`) so their scripts can fill them in; the result is snapshotted as
+plain HTML with the scripts stripped. That Chrome is locked down: every request it makes is answered by the
+same guarded fetcher (public addresses only), Chrome itself points at a dead proxy so nothing gets out
+another way, WebSockets/service workers/WebRTC are off, its sandbox is on, and each render has a deadline
+and a byte budget. Without Chrome (or with `RENDER=off`), pages load without their scripts.
 
 ## Tests
 

@@ -4,7 +4,8 @@ import fs from 'node:fs/promises';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { WebSocketServer } from 'ws';
-import { fetchPage, fetchImage, UserError } from './fetchPage.js';
+import { fetchPage, fetchImage, parseTarget, UserError } from './fetchPage.js';
+import { renderPage, canRender, closeRenderer } from './render.js';
 import { Rooms } from './rooms.js';
 import { uploadHandler } from './uploads.js';
 
@@ -48,6 +49,14 @@ async function api(req, res, url) {
     if (url.pathname === '/api/page') {
       if (!pageLimit(ip)) return json(res, 429, { error: 'Too many pages at once. Wait a minute.' });
       // JSON, never text/html: opening this URL directly must not render someone else's page on our origin
+      if (url.searchParams.get('js') === '1' && canRender()) {
+        parseTarget(target); // bad addresses get the usual answer straight away
+        try {
+          return json(res, 200, await renderPage(target));
+        } catch (e) {
+          console.warn('render failed, loading it without its scripts:', target, e.message); // the static fetch re-checks everything
+        }
+      }
       return json(res, 200, await fetchPage(target));
     }
     if (url.pathname === '/api/asset') {
@@ -131,7 +140,7 @@ export function startServer({ port = 8787, host = '0.0.0.0', uploadDir = path.jo
 
   return new Promise((resolve) => {
     server.listen(port, host, () => {
-      const close = () => { clearInterval(ping); rooms.close(); wss.close(); server.close(); };
+      const close = () => { clearInterval(ping); rooms.close(); wss.close(); server.close(); closeRenderer(); };
       resolve({ server, rooms, port: server.address().port, close });
     });
   });

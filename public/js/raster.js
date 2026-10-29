@@ -26,7 +26,8 @@ export async function loadPage(src, progress = () => {}) {
     proxied = false;
   } else {
     let r;
-    try { r = await fetch(`/api/page?url=${encodeURIComponent(src.url)}`); } catch { throw new Error('Pages from other sites need the game server running (npm start).'); }
+    progress('Opening the page and letting it build itself', 0.05); // the server runs its scripts for a few seconds
+    try { r = await fetch(`/api/page?url=${encodeURIComponent(src.url)}&js=1`); } catch { throw new Error('Pages from other sites need the game server running (npm start).'); }
     const j = await r.json().catch(() => ({}));
     if (!r.ok) throw new Error(j.error || "Couldn't load that site.");
     html = j.html; base = j.finalUrl; proxied = true;
@@ -87,14 +88,15 @@ async function rasterize(html, base, proxied, progress) {
     progress('Fetching the pictures', 0.3);
     const blocks = makeCanvas(LAYOUT_W, H), text = makeCanvas(LAYOUT_W, H), back = makeCanvas(LAYOUT_W, H);
     const pageBg = pageBackground(doc, win);
-    const items = collect(doc, win, H);
+    const clips = clipper(win);
+    const { items, overlays } = collect(doc, win, H, clips);
     await loadPictures(items, proxied);
 
     progress('Painting the boxes and pictures', 0.45);
     const boxes = paintInOrder(items, blocks, back, pageBg);
 
     progress('Painting the words', 0.6);
-    const letters = await paintText(doc, win, text, H, progress);
+    const letters = await paintText(doc, win, text, H, progress, overlays, clips);
 
     progress('Cutting it into pieces', 0.85);
     await tick();
@@ -119,48 +121,79 @@ function pageBackground(doc, win) {
 
 // Every visible element in page order: boxes and pictures get painted in this order, so a box sitting on a
 // photo ends up on top of it, like in the browser.
-function collect(doc, win, H) {
-  const items = [];
+function collect(doc, win, H, clips) {
+  const items = [], overlays = [];
   for (const el of doc.body.querySelectorAll('*')) {
     const tag = el.localName;
     if (SKIP.has(tag)) continue;
     if (tag !== 'svg' && el.closest('svg')) continue; // an SVG is painted as one picture
     const cs = win.getComputedStyle(el);
     if (cs.display === 'none' || cs.visibility !== 'visible' || Number(cs.opacity) < 0.1) continue;
+    if (overlays.some((o) => o.contains(el))) continue;
     const r = el.getBoundingClientRect();
     if (r.width < 1 || r.height < 1 || r.bottom < 0 || r.top > H || r.right < 0 || r.left > LAYOUT_W) continue;
-    items.push({ el, r, cs, tag, media: MEDIA.has(tag) || (tag === 'input' && el.type === 'image') });
+    // cookie banners, chat bubbles and the like are pinned to the bottom of the window, not part of the page
+    if (cs.position === 'fixed' && r.top > 120) { overlays.push(el); continue; }
+    items.push({ el, r, cs, tag, clip: clips(el), media: MEDIA.has(tag) || (tag === 'input' && el.type === 'image') });
   }
-  return items;
+  return { items, overlays };
+}
+
+// Where an element is actually visible: its ancestors that hide overflow (cut-off descriptions,
+// carousels) clip it, as in the browser. Returns [left, top, right, bottom], memoised per element.
+function clipper(win) {
+  const memo = new Map(), none = [-Infinity, -Infinity, Infinity, Infinity];
+  const clipOf = (el) => {
+    if (!el || el === el.ownerDocument.body || el === el.ownerDocument.documentElement) return none;
+    let c = memo.get(el);
+    if (c) return c;
+    c = clipOf(el.parentElement);
+    const cs = win.getComputedStyle(el);
+    if (cs.overflowX !== 'visible' || cs.overflowY !== 'visible') {
+      const r = el.getBoundingClientRect();
+      c = [Math.max(c[0], r.left), Math.max(c[1], r.top), Math.min(c[2], r.right), Math.min(c[3], r.bottom)];
+    }
+    memo.set(el, c);
+    return c;
+  };
+  return (el) => clipOf(el.parentElement);
 }
 
 // Paints each element's background and borders, and each picture. Returns the box of every element that
 // put something solid on the page (so it can later crack off as one piece).
 function paintInOrder(items, ctx, bctx, pageBg) {
   const boxes = [];
-  for (const { r, cs, media, img } of items) {
-    const rect = [r.left, r.top, r.right, r.bottom];
-    if (media) {
-      if (!(img && drawImageSafe(ctx, img, r, cs))) placeholder(ctx, r);
-      boxes.push(rect); // a picture breaks off as one piece too
-      continue;
-    }
-    const bg = parseColor(cs.backgroundColor);
-    if (bg && bg[3] > 0.15) {
-      // huge, or the same colour as the page with only page under it: scenery behind the fight
-      const huge = r.width * r.height > BIG_BOX || (r.width > LAYOUT_W * 0.9 && r.height > 330);
-      const scenery = huge || (near(bg, pageBg) && !onTerrain(ctx, r));
-      const c = scenery ? bctx : ctx;
-      c.fillStyle = cs.backgroundColor;
-      const rad = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
-      c.beginPath();
-      if (rad > 1) c.roundRect(r.left, r.top, r.width, r.height, rad); else c.rect(r.left, r.top, r.width, r.height);
-      c.fill();
-      if (!scenery) { boxes.push(rect); paintBorders(ctx, r, cs); continue; }
-    }
-    if (paintBorders(ctx, r, cs)) boxes.push(rect);
+  for (const { r, cs, media, img, clip } of items) {
+    const rect = [Math.max(r.left, clip[0]), Math.max(r.top, clip[1]), Math.min(r.right, clip[2]), Math.min(r.bottom, clip[3])];
+    if (rect[2] <= rect[0] || rect[3] <= rect[1]) continue; // entirely cut off
+    const clipped = rect[0] > r.left || rect[1] > r.top || rect[2] < r.right || rect[3] < r.bottom;
+    if (clipped) for (const c of [ctx, bctx]) { c.save(); c.beginPath(); c.rect(rect[0], rect[1], rect[2] - rect[0], rect[3] - rect[1]); c.clip(); }
+    paintItem(ctx, bctx, pageBg, boxes, rect, r, cs, media, img);
+    if (clipped) for (const c of [ctx, bctx]) c.restore();
   }
   return boxes;
+}
+
+function paintItem(ctx, bctx, pageBg, boxes, rect, r, cs, media, img) {
+  if (media) {
+    if (!(img && drawImageSafe(ctx, img, r, cs))) placeholder(ctx, r);
+    boxes.push(rect); // a picture breaks off as one piece too
+    return;
+  }
+  const bg = parseColor(cs.backgroundColor);
+  if (bg && bg[3] > 0.15) {
+    // huge, or the same colour as the page with only page under it: scenery behind the fight
+    const huge = r.width * r.height > BIG_BOX || (r.width > LAYOUT_W * 0.9 && r.height > 330);
+    const scenery = huge || (near(bg, pageBg) && !onTerrain(ctx, r));
+    const c = scenery ? bctx : ctx;
+    c.fillStyle = cs.backgroundColor;
+    const rad = Math.min(parseFloat(cs.borderTopLeftRadius) || 0, r.width / 2, r.height / 2);
+    c.beginPath();
+    if (rad > 1) c.roundRect(r.left, r.top, r.width, r.height, rad); else c.rect(r.left, r.top, r.width, r.height);
+    c.fill();
+    if (!scenery) { boxes.push(rect); paintBorders(ctx, r, cs); return; }
+  }
+  if (paintBorders(ctx, r, cs)) boxes.push(rect);
 }
 
 // Is most of this rectangle already covered by something solid (a photo, a coloured band)?
@@ -259,12 +292,12 @@ function placeholder(ctx, r) {
 }
 
 // Every visible character, drawn where the browser put it. Returns each one's box.
-async function paintText(doc, win, ctx, H, progress) {
+async function paintText(doc, win, ctx, H, progress, overlays, clips) {
   const letters = [];
   const walker = doc.createTreeWalker(doc.body, NodeFilter.SHOW_TEXT);
   const range = doc.createRange();
   ctx.textBaseline = 'alphabetic';
-  let count = 0, node, parent = null, ok = false, descent = 0, transform = 'none';
+  let count = 0, node, parent = null, ok = false, descent = 0, transform = 'none', clip = null;
   while ((node = walker.nextNode())) {
     const s = node.data;
     if (!/\S/.test(s)) continue;
@@ -273,7 +306,8 @@ async function paintText(doc, win, ctx, H, progress) {
     if (el !== parent) {
       parent = el;
       ok = false;
-      if (el.closest('script,style,template,svg,title,textarea,select')) continue;
+      if (el.closest('script,style,template,svg,title,textarea,select') || overlays.some((o) => o.contains(el))) continue;
+      clip = clips(node); // what this text's element and its ancestors let show
       const cs = win.getComputedStyle(el), col = parseColor(cs.color);
       if (!col || col[3] < 0.2 || cs.visibility !== 'visible' || Number(cs.opacity) < 0.1) continue;
       ok = true;
@@ -294,6 +328,8 @@ async function paintText(doc, win, ctx, H, progress) {
       i += len;
       const rr = range.getClientRects()[0];
       if (!rr || rr.width < 0.5 || rr.bottom < 0 || rr.top > H || rr.right < 0 || rr.left > LAYOUT_W) { wordStart = false; continue; }
+      const mx = (rr.left + rr.right) / 2, my = (rr.top + rr.bottom) / 2;
+      if (mx < clip[0] || mx > clip[2] || my < clip[1] || my > clip[3]) { wordStart = false; continue; } // cut off by the site
       let out = ch;
       if (transform === 'uppercase' || (transform === 'capitalize' && wordStart)) out = ch.toUpperCase();
       else if (transform === 'lowercase') out = ch.toLowerCase();

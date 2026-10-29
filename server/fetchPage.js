@@ -9,6 +9,9 @@ import zlib from 'node:zlib';
 // Problems the player should see verbatim.
 export class UserError extends Error {}
 
+// Only the test suite turns this on, to fetch from a local fixture server on 127.0.0.1 (any port).
+export const policy = { testing: false };
+
 const V4_BLOCKED = [
   ['0.0.0.0', 8], ['10.0.0.0', 8], ['100.64.0.0', 10], ['127.0.0.0', 8], ['169.254.0.0', 16],
   ['172.16.0.0', 12], ['192.0.0.0', 24], ['192.0.2.0', 24], ['192.88.99.0', 24], ['192.168.0.0', 16],
@@ -64,7 +67,7 @@ export function parseTarget(raw) {
   try { u = new URL(s); } catch { throw new UserError("That doesn't look like a web address."); }
   if (u.protocol !== 'http:' && u.protocol !== 'https:') throw new UserError('Only http and https pages can be loaded.');
   if (u.username || u.password) throw new UserError('Addresses with passwords in them are not allowed.');
-  if (u.port && u.port !== '80' && u.port !== '443') throw new UserError('Only pages on the normal web ports can be loaded.');
+  if (u.port && u.port !== '80' && u.port !== '443' && !policy.testing) throw new UserError('Only pages on the normal web ports can be loaded.');
   const host = u.hostname.toLowerCase().replace(/\.$/, '');
   const bare = host.replace(/^\[|\]$/g, '');
   if (!host || (!net.isIP(bare) && !host.includes('.')) || /(^|\.)(localhost|local|internal|intranet|lan|home\.arpa)$/.test(host)) {
@@ -74,20 +77,29 @@ export function parseTarget(raw) {
   return u;
 }
 
+const allowed = (ip) => isPublicAddress(ip) || (policy.testing && ip === '127.0.0.1');
+
 async function resolvePublic(hostname) {
   const h = hostname.replace(/^\[|\]$/g, '');
   if (net.isIP(h)) {
-    if (!isPublicAddress(h)) throw new UserError("That address isn't on the public web.");
+    if (!allowed(h)) throw new UserError("That address isn't on the public web.");
     return { address: h, family: net.isIP(h) };
   }
   let addrs;
   try { addrs = await dns.lookup(h, { all: true, verbatim: true }); } catch { throw new UserError("Couldn't find that site."); }
   // every address must be public, or a name with one private record could be used to sneak in
-  if (!addrs.length || addrs.some((a) => !isPublicAddress(a.address))) throw new UserError("That address isn't on the public web.");
+  if (!addrs.length || addrs.some((a) => !allowed(a.address))) throw new UserError("That address isn't on the public web.");
   return addrs[0];
 }
 
 function request(url, addr, accept, timeoutMs) {
+  return send(url, addr, {
+    timeoutMs,
+    headers: { 'user-agent': 'Mozilla/5.0 (compatible; DebrisBrawl/0.1; page-to-terrain game)', accept, 'accept-language': 'en' },
+  });
+}
+
+function send(url, addr, { method = 'GET', headers = {}, body = null, timeoutMs }) {
   return new Promise((resolve, reject) => {
     // the socket timeout only catches silence; this also stops headers trickling in a byte at a time
     const deadline = setTimeout(() => req.destroy(new UserError('The site took too long to answer.')), timeoutMs);
@@ -97,20 +109,40 @@ function request(url, addr, accept, timeoutMs) {
       hostname: url.hostname.replace(/^\[|\]$/g, ''),
       port: url.port || undefined,
       path: url.pathname + url.search,
-      method: 'GET',
+      method,
       agent: false,
       timeout: timeoutMs,
-      headers: {
-        'user-agent': 'Mozilla/5.0 (compatible; DebrisBrawl/0.1; page-to-terrain game)',
-        accept, 'accept-language': 'en', 'accept-encoding': 'gzip, deflate, br',
-      },
+      headers: { ...headers, 'accept-encoding': 'gzip, deflate, br' },
       // connect to the address we already checked, never a fresh DNS answer
       lookup: (_h, opts, cb) => (opts && opts.all ? cb(null, [{ address: addr.address, family: addr.family }]) : cb(null, addr.address, addr.family)),
     }, (res) => { clearTimeout(deadline); resolve(res); });
     req.on('timeout', () => req.destroy(new UserError('The site took too long to answer.')));
     req.on('error', (e) => clearTimeout(deadline) || reject(e instanceof UserError ? e : new UserError("Couldn't reach that site.")));
-    req.end();
+    req.end(body ?? undefined);
   });
+}
+
+// Headers a browser may pass on for a page's own requests (no hop-by-hop, no Host: we set our own).
+const FORWARD = ['accept', 'accept-language', 'content-type', 'cookie', 'origin', 'referer', 'user-agent', 'x-requested-with',
+  'next-router-state-tree', 'next-url', 'rsc', 'next-router-prefetch'];
+const DROP_BACK = new Set(['content-encoding', 'content-length', 'transfer-encoding', 'connection', 'keep-alive', 'alt-svc', 'strict-transport-security']);
+
+// One request on behalf of the headless browser (server/render.js), under the same rules as everything
+// else: public addresses only, the checked address is the one we connect to, capped size and time.
+// Redirects go back to the browser, which asks again (and so gets checked again).
+export async function proxyFetch(raw, { method = 'GET', headers = {}, body = null, maxBytes = 8_000_000, timeoutMs = 10000 } = {}) {
+  if (!['GET', 'HEAD', 'POST', 'OPTIONS'].includes(method)) throw new UserError('Method not allowed.');
+  const url = parseTarget(raw);
+  const addr = await resolvePublic(url.hostname);
+  const out = {};
+  for (const k of FORWARD) if (headers[k] !== undefined) out[k] = String(headers[k]);
+  if (body && body.length > 1_000_000) throw new UserError('Request too big.');
+  const res = await send(url, addr, { method, headers: out, body, timeoutMs });
+  const back = {};
+  for (const [k, v] of Object.entries(res.headers)) if (!DROP_BACK.has(k)) back[k] = Array.isArray(v) ? v.join('\n') : String(v);
+  const noBody = method === 'HEAD' || res.statusCode === 204 || res.statusCode === 304 || (res.statusCode >= 300 && res.statusCode < 400);
+  const buf = noBody ? (res.destroy(), Buffer.alloc(0)) : await readCapped(res, maxBytes, timeoutMs);
+  return { status: res.statusCode, headers: back, body: buf };
 }
 
 function readCapped(res, max, timeoutMs) {

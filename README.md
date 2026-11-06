@@ -2,9 +2,12 @@
 
 Type an address. Smash the page to bits. Pick up the bits and throw them at your friends.
 
-A multiplayer take on "destroy any website": any web page becomes pixel terrain you run, jump and fly
+A multiplayer take on Destroy Any Website: any web page becomes pixel terrain you run, jump and fly
 across while you shoot it apart. The twist: everything you blow up becomes **rubble you can pick up and
 throw**, and a thrown chunk of page hurts whoever it lands on.
+
+Inspired by [Destroy Any Website](https://www.spritefusion.com/games/destroy-any-website) by Hugo Duprez
+on [Sprite Fusion](https://www.spritefusion.com/). Unofficial and not affiliated.
 
 ![A store page blown into shards, with bots fighting on the wreckage](docs/screenshots/shop.png)
 

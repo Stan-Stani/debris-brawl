@@ -9,6 +9,8 @@ throw**, and a thrown chunk of page hurts whoever it lands on.
 Inspired by [Destroy Any Website](https://www.spritefusion.com/games/destroy-any-website) by Hugo Duprez
 on [Sprite Fusion](https://www.spritefusion.com/). Unofficial and not affiliated.
 
+![Wrecking google.com: the logo shot apart, then a chunk of it picked up and thrown](docs/screenshots/google.webp)
+
 ![A store page blown into shards, with bots fighting on the wreckage](docs/screenshots/shop.png)
 
 | | |

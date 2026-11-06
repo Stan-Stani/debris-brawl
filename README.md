@@ -30,6 +30,10 @@ npm start            # http://localhost:8787
 Open it, pick one of the four built-in pages (or type any address), and press **Play** for solo with bots,
 **Create room** to get a 6-character code / invite link for friends, or **Quick match**.
 
+Tick **Debris only** for a match with no guns or grenades: E (or a click) tears a piece off the page where
+you aim, a letter whole or anything else as a rock, and that's what you throw. A room keeps the mode its
+creator picked; quick match only pairs you with rooms of the mode you ticked.
+
 The server listens on all interfaces (`HOST=0.0.0.0`) so friends on your network can join via your IP.
 Use `HOST=127.0.0.1 npm start` to keep it local, `PORT=…` to change the port.
 

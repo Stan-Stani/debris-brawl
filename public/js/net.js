@@ -27,14 +27,15 @@ export class WsNet {
 }
 
 export class LocalNet {
-  constructor(grid, { name, bots, mapName, look, scenery }) {
+  constructor(grid, { name, bots, mapName, look, scenery, debrisOnly }) {
     this.grid = grid; this.name = name; this.bots = bots; this.mapName = mapName; this.look = look; this.scenery = scenery;
+    this.debrisOnly = debrisOnly;
     this.paused = false; this.solo = true;
   }
 
   connect(handler) {
     this.handler = handler;
-    const g = this.game = new Game(this.grid.clone(), { timed: false });
+    const g = this.game = new Game(this.grid.clone(), { timed: false, debrisOnly: this.debrisOnly });
     for (let i = 0; i < this.bots; i++) g.addBot();
     this.me = g.addPlayer(this.name).id;
     handler({ t: 'welcome', code: null, host: this.me, grid: this.grid.clone(), terrain: this.look, scenery: this.scenery, mapName: this.mapName, ...g.welcome(this.me) });

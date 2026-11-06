@@ -21,6 +21,7 @@ const BOT_NAMES = ['Botley', 'Rubble Rae', 'Crumbs', 'Pixel Pete', 'Shardy', 'De
 export class Game {
   constructor(grid, opts = {}) {
     this.timed = opts.timed ?? true;
+    this.debrisOnly = !!opts.debrisOnly; // no guns or grenades: you tear the page apart by hand
     this.rand = rng(opts.seed ?? ((Math.random() * 2 ** 32) >>> 0));
     this.players = new Map();
     this.nextPid = 1;
@@ -145,7 +146,7 @@ export class Game {
 
   fire(p, m) {
     const w = typeof m.w === 'number' ? m.w | 0 : -1, W = WEAPONS[w];
-    if (!W || p.hold || this.time < p.cd[w]) return;
+    if (this.debrisOnly || !W || p.hold || this.time < p.cd[w]) return;
     const as = (Array.isArray(m.a) ? m.a : [m.a]).slice(0, W.pellets).map((a) => num(a, -10, 10)).filter((a) => a !== null);
     if (!as.length) return;
     p.cd[w] = this.time + W.cd * 0.8; // slack for network jitter
@@ -164,7 +165,7 @@ export class Game {
   }
 
   grenade(p, a) {
-    if (p.hold || this.time < p.nade) return;
+    if (this.debrisOnly || p.hold || this.time < p.nade) return;
     p.nade = this.time + GRENADE.cd * 0.9; p.prot = 0;
     const b = p.body;
     this.addEnt({
@@ -175,7 +176,8 @@ export class Game {
     this.ev.push(['nade', p.id]);
   }
 
-  // E: grab the nearest loose piece in reach (a rock, a letter, a shard), else scoop rubble into a rock.
+  // E: grab the nearest loose piece in reach (a rock, a letter, a shard), else scoop rubble into a rock
+  // (in debris-only, else tear a piece out of the page).
   grab(p) {
     if (p.hold || this.time < p.grabCd) return;
     p.grabCd = this.time + DEBRIS.grabCd;
@@ -199,12 +201,46 @@ export class Game {
         if (d <= rc * rc) found.push([d, k]);
       }
     }
-    if (found.length < DEBRIS.minCells) { this.ev.push(['nograb', p.id, heavy ? 1 : 0]); return; }
+    if (found.length < DEBRIS.minCells) {
+      if (!(this.debrisOnly && this.tear(p))) this.ev.push(['nograb', p.id, heavy ? 1 : 0]);
+      return;
+    }
     found.sort((a, b) => a[0] - b[0]);
-    const take = found.slice(0, DEBRIS.maxCells).map((f) => f[1]);
-    const cols = take.map((k) => g.col[k]);
+    this.liftRock(p, found.slice(0, DEBRIS.maxCells).map((f) => f[1]));
+  }
+
+  // Debris only, with nothing loose in reach: tear a piece out of the page where you're aiming.
+  // A letter you point at comes off whole; anything else comes out as a rock (other letters stay whole).
+  tear(p) {
+    const g = this.grid, rc = DEBRIS.reach / CELL, gx = p.body.x / CELL, gy = (p.body.y - P.h / 2) / CELL;
+    const ax = gx + Math.cos(p.aim) * rc * 0.5, ay = gy + Math.sin(p.aim) * rc * 0.5;
+    let best = -1, bd = Infinity;
+    const cells = [];
+    for (let j = Math.max(0, Math.floor(gy - rc)); j <= Math.min(g.h - 1, Math.floor(gy + rc)); j++) {
+      for (let i = Math.max(0, Math.floor(gx - rc)); i <= Math.min(g.w - 1, Math.floor(gx + rc)); i++) {
+        const k = j * g.w + i;
+        if (g.mat[k] === EMPTY || (i + 0.5 - gx) ** 2 + (j + 0.5 - gy) ** 2 > rc * rc) continue;
+        const d = (i + 0.5 - ax) ** 2 + (j + 0.5 - ay) ** 2;
+        if (d < bd) { bd = d; best = k; }
+        if (g.own[k] <= 0) cells.push([d, k]);
+      }
+    }
+    if (best < 0) return false;
+    if (g.own[best] > 0) {
+      const c = this.detachGlyph(g.own[best], 0, 0, p.id, false);
+      if (c) { this.pickUp(p, c); return true; }
+    }
+    if (cells.length < DEBRIS.minCells) return false;
+    cells.sort((a, b) => a[0] - b[0]);
+    this.liftRock(p, cells.slice(0, DEBRIS.maxCells).map((f) => f[1]));
+    return true;
+  }
+
+  // These cells come out of the page as one round rock, straight into p's hands.
+  liftRock(p, take) {
+    const g = this.grid, cols = take.map((k) => g.col[k]);
     this.op(['x', ...take]);
-    const c = this.addPiece(cols, rockShape(cols.length), cx, cy, { owner: p.id });
+    const c = this.addPiece(cols, rockShape(cols.length), p.body.x, p.body.y - P.h / 2, { owner: p.id });
     this.ev.push(['chunk', c.id, cols]);
     this.pickUp(p, c);
   }
@@ -447,7 +483,7 @@ export class Game {
   detachGlyph(gid, vx, vy, owner, harm) {
     const g = this.grid, t = g.glyphs, q = (gid - 1) * 4, idx = [];
     for (let y = t[q + 1]; y <= t[q + 3]; y++) for (let x = t[q]; x <= t[q + 2]; x++) if (g.own[y * g.w + x] === gid) idx.push(y * g.w + x);
-    if (idx.length) this.breakOff(idx, vx, vy, (this.rand() - 0.5) * 16, owner, harm);
+    return idx.length ? this.breakOff(idx, vx, vy, (this.rand() - 0.5) * 16, owner, harm) : null;
   }
 
   blockHp(bid) {
@@ -840,6 +876,12 @@ export class Game {
     }
     ai.fire -= dt;
     if (ai.fire > 0) return;
+    if (this.debrisOnly) { // empty-handed: tear off something to throw (aiming at them, so it's from their side)
+      ai.fire = 0.25 + this.rand() * 0.5;
+      this.grab(p);
+      ai.charge = 0;
+      return;
+    }
     if (ai.burst > 0) {
       ai.burst--;
       this.fire(p, { w: 1, a: [p.aim + (this.rand() - 0.5) * 2 * WEAPONS[1].spread] });
@@ -871,7 +913,7 @@ export class Game {
   }
 
   welcome(id) {
-    return { id, players: this.roster(), chunks: this.chunkList(), timed: this.timed };
+    return { id, players: this.roster(), chunks: this.chunkList(), timed: this.timed, debrisOnly: this.debrisOnly };
   }
 
   flush() {

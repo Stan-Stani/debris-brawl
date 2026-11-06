@@ -80,6 +80,7 @@ export class ClientGame {
     this.code = m.code ?? this.code;
     this.host = m.host ?? this.host;
     this.timed = m.timed;
+    this.debrisOnly = !!m.debrisOnly;
     this.mapName = m.mapName ?? '';
     this.players.clear();
     for (const [id, name, color, bot] of m.players) this.addPlayer(id, name, color, bot);
@@ -253,7 +254,11 @@ export class ClientGame {
         this.sparks(e[2], e[3], '#ffffff', 10);
         break;
       case 'nograb':
-        if (e[1] === me.id) { this.toast(e[2] ? 'That piece is too heavy to lift. Break it up first!' : 'No loose debris in reach. Blast something first!'); this.sfx.play('nograb'); }
+        if (e[1] === me.id) {
+          this.toast(e[2] ? 'That piece is too heavy to lift. Break it up first!'
+            : this.debrisOnly ? 'Nothing in reach to tear off. Get up against the page!' : 'No loose debris in reach. Blast something first!');
+          this.sfx.play('nograb');
+        }
         break;
       case 'end': this.sfx.play('end'); this.showBoard = true; break;
     }
@@ -478,6 +483,9 @@ export class ClientGame {
           this.sfx.play('throw');
         }
       }
+    } else if (this.debrisOnly) { // no guns: any click, or E, tears off something to throw
+      me.charging = false; me.charge = 0;
+      if (m.pressed || this.grabPressed || this.nadePressed) this.net.send({ t: 'e' });
     } else {
       me.charging = false; me.charge = 0;
       const W = WEAPONS[me.weapon];
@@ -864,7 +872,7 @@ export class ClientGame {
 
     // top left: where you are
     ctx.font = '700 12px system-ui, sans-serif'; ctx.textAlign = 'left';
-    const label = this.code ? `ROOM ${this.code}` : 'SOLO';
+    const label = (this.code ? `ROOM ${this.code}` : 'SOLO') + (this.debrisOnly ? ' · DEBRIS ONLY' : '');
     const info = `${label}  ·  ${this.mapName}`;
     ctx.fillStyle = panel; ctx.fillRect(10, 10, ctx.measureText(info).width + 20, 26);
     ctx.fillStyle = txt; ctx.fillText(info, 20, 23);
@@ -908,9 +916,9 @@ export class ClientGame {
     ctx.fillStyle = '#ffb02e'; ctx.fillRect(24, H - 27, 200 * Math.max(0, fuel), 5);
 
     // bottom centre: weapons, grenade, debris
-    const slots = [...WEAPONS.map((w, i) => ({ key: String(i + 1), name: w.name, on: me.weapon === i && !this.heldSprite() })),
-      { key: 'RMB', name: 'Grenade', cd: Math.max(0, me.nade - this.clock) / GRENADE.cd },
-      { key: 'E', name: this.heldSprite() ? `${this.heldSprite().smooth ? 'Piece' : 'Rock'} ×${this.heldSprite().n}` : 'Debris', on: !!this.heldSprite() }];
+    const slots = [...(this.debrisOnly ? [] : [...WEAPONS.map((w, i) => ({ key: String(i + 1), name: w.name, on: me.weapon === i && !this.heldSprite() })),
+      { key: 'RMB', name: 'Grenade', cd: Math.max(0, me.nade - this.clock) / GRENADE.cd }]),
+      { key: this.debrisOnly ? 'E / click' : 'E', name: this.heldSprite() ? `${this.heldSprite().smooth ? 'Piece' : 'Rock'} ×${this.heldSprite().n}` : 'Debris', on: !!this.heldSprite() }];
     ctx.font = '700 11px system-ui, sans-serif';
     const sw = 76, total = slots.length * (sw + 6) - 6;
     let x = W / 2 - total / 2;

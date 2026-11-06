@@ -49,8 +49,8 @@ class Conn {
 }
 
 class Room {
-  constructor(code, isPublic) {
-    this.code = code; this.public = isPublic;
+  constructor(code, isPublic, debrisOnly) {
+    this.code = code; this.public = isPublic; this.debrisOnly = debrisOnly;
     this.conns = new Set(); this.host = null; this.game = null;
     this.mapName = ''; this.tickN = 0; this.emptySince = Date.now(); this.created = Date.now();
     this.packed = null; this.packedRev = -1;
@@ -124,7 +124,7 @@ class Room {
     this.mapName = cleanText(m.name, 80);
     this.img = imageData(m.img); this.bg = imageData(m.bg); this.initPacked = null;
     if (!this.game) {
-      this.game = new Game(grid, { timed: true });
+      this.game = new Game(grid, { timed: true, debrisOnly: this.debrisOnly });
       for (const c of this.conns) this.enter(c);
     } else {
       this.game.loadMap(grid); // everyone gets it with the next update
@@ -183,11 +183,11 @@ export class Rooms {
     }, 4);
   }
 
-  create(isPublic) {
+  create(isPublic, debrisOnly = false) {
     let code;
     do code = Array.from({ length: 6 }, () => CODE_CHARS[crypto.randomInt(CODE_CHARS.length)]).join('');
     while (this.rooms.has(code));
-    const r = new Room(code, isPublic);
+    const r = new Room(code, isPublic, debrisOnly);
     this.rooms.set(code, r);
     return r;
   }
@@ -202,10 +202,12 @@ export class Rooms {
     const refuse = (msg) => { conn.send({ t: 'error', msg }); ws.close(); };
     let room;
     if (want === 'NEW' || want === 'QUICK') {
-      if (want === 'QUICK') room = [...this.rooms.values()].find((r) => r.public && r.humans < MAX_PLAYERS);
+      // a new room takes the mode you picked; quick match only puts you in a room of that mode
+      const debrisOnly = params.get('mode') === 'debris';
+      if (want === 'QUICK') room = [...this.rooms.values()].find((r) => r.public && r.debrisOnly === debrisOnly && r.humans < MAX_PLAYERS);
       if (!room) {
         if (this.rooms.size >= MAX_ROOMS) return refuse('The server is full right now. Try again soon.');
-        room = this.create(want === 'QUICK');
+        room = this.create(want === 'QUICK', debrisOnly);
       }
     } else {
       room = this.rooms.get(want);

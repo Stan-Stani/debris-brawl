@@ -83,7 +83,7 @@ async function startSolo() {
   try {
     const page = await loadPage(src, progress);
     if (token !== loadToken) return;
-    net = new LocalNet(page.grid, { name, bots, mapName: page.name, look: page.look, scenery: page.scenery });
+    net = new LocalNet(page.grid, { name, bots, mapName: page.name, look: page.look, scenery: page.scenery, debrisOnly: $('debrisonly').checked });
     begin(net);
     net.connect((m) => game?.receive(m));
   } catch (e) {
@@ -96,7 +96,8 @@ function startOnline(room) {
   const name = playerName(), token = ++loadToken;
   show('loading');
   progress('Connecting', 0.05);
-  net = new WsNet({ room, name });
+  // the mode only matters for a new room or quick match; a room you join by code keeps its own
+  net = new WsNet({ room, name, ...($('debrisonly').checked && { mode: 'debris' }) });
   net.connect(async (m) => {
     if (token !== loadToken) return;
     if (game) { game.receive(m); return; }
@@ -186,6 +187,8 @@ async function changeMap(src) {
 // ---- wiring ----
 
 $('name').value = store.get('db:name', '');
+$('debrisonly').checked = store.get('db:debrisonly', '0') === '1';
+$('debrisonly').addEventListener('change', (e) => store.set('db:debrisonly', e.target.checked ? '1' : '0'));
 mapCards($('maps'), (id) => { selected = id; store.set('db:map', id); $('url').value = ''; markSelected(); });
 mapCards($('maps2'), (id) => changeMap({ kind: 'map', id }));
 markSelected();

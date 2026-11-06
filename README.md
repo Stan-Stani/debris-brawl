@@ -6,6 +6,15 @@ A multiplayer take on "destroy any website": any web page becomes pixel terrain 
 across while you shoot it apart. The twist: everything you blow up becomes **rubble you can pick up and
 throw**, and a thrown chunk of page hurts whoever it lands on.
 
+![A store page blown into shards, with bots fighting on the wreckage](docs/screenshots/shop.png)
+
+| | |
+| --- | --- |
+| ![Rocket craters in a news front page](docs/screenshots/news.png) | ![Winding up to throw a 2,512-cell chunk of page](docs/screenshots/throw.png) |
+| ![An encyclopedia article mid-explosion](docs/screenshots/wiki.png) | ![A dark-mode blog with its code block shattered](docs/screenshots/devlog.png) |
+
+![Start menu: type an address or pick a built-in page](docs/screenshots/menu.png)
+
 ## Run it
 
 ```sh
